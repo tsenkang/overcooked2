@@ -1,6 +1,6 @@
 import { RECIPES } from './content';
 import { potDone, vesselBurnLimit, vesselReady } from './engine';
-import type { ArenaDef, FoodId, FoodItem, GameState, HatId, Item, Player, Tile, VesselItem } from './types';
+import type { ArenaDef, FoodId, FoodItem, GameState, HatId, Item, Player, ThiefState, Tile, VesselItem } from './types';
 import { TUNING as K } from './types';
 
 // ─── Tokens visuais ─────────────────────────────────────────────────────────
@@ -30,6 +30,7 @@ const C = {
   paper: '#fffaf0',
   soupTomato: '#e0463a',
   soupOnion: '#e9b949',
+  soupMixed: '#d97b3f',
   bunTop: '#e2a04f',
   bunBot: '#d58f3f',
   patty: '#7a4a2a',
@@ -147,22 +148,37 @@ function drawPlateBase(ctx: CanvasRenderingContext2D, x: number, y: number, s: n
 export function drawPlateContents(ctx: CanvasRenderingContext2D, parts: string[], x: number, y: number, s: number) {
   for (const p of parts) {
     if (p.startsWith('soup:')) {
-      const onion = p.endsWith('onion');
-      ellipse(ctx, x, y, 15 * s, 8 * s, onion ? C.soupOnion : C.soupTomato);
+      const kind = p.slice(5); // 'tomato' | 'onion' | 'mixed'
+      const color = kind === 'onion' ? C.soupOnion : kind === 'mixed' ? C.soupMixed : C.soupTomato;
+      ellipse(ctx, x, y, 15 * s, 8 * s, color);
       ellipse(ctx, x - 4 * s, y - 2 * s, 5 * s, 2 * s, 'rgba(255,255,255,0.35)');
-      emoji(ctx, onion ? '🧅' : '🍅', x + 5 * s, y, 11 * s);
+      if (kind === 'mixed') {
+        emoji(ctx, '🍅', x - 2 * s, y, 10 * s);
+        emoji(ctx, '🧅', x + 7 * s, y + 1 * s, 10 * s);
+      } else {
+        emoji(ctx, kind === 'onion' ? '🧅' : '🍅', x + 5 * s, y, 11 * s);
+      }
     }
   }
   const hasBun = parts.includes('bun:raw');
   const hasMeat = parts.includes('meat:cooked');
   const hasLettuce = parts.includes('lettuce:chopped');
   const hasTomato = parts.includes('tomato:chopped');
+  const hasOnion = parts.includes('onion:chopped');
   if (hasBun) {
     ellipse(ctx, x, y + 1 * s, 15 * s, 6 * s, C.bunBot);
     let yy = y - 2 * s;
     if (hasMeat) {
       drawPatty(ctx, x, yy, s * 0.95);
       yy -= 5 * s;
+    }
+    if (hasTomato) {
+      emoji(ctx, '🍅', x, yy, 15 * s);
+      yy -= 3.5 * s;
+    }
+    if (hasOnion) {
+      emoji(ctx, '🧅', x, yy, 13 * s);
+      yy -= 3 * s;
     }
     if (hasLettuce) {
       ellipse(ctx, x, yy + 1 * s, 16 * s, 5 * s, C.lettuce);
@@ -184,6 +200,7 @@ export function drawPlateContents(ctx: CanvasRenderingContext2D, parts: string[]
     emoji(ctx, '🍅', x + 7 * s, y + 2 * s, 13 * s, 0.2);
     emoji(ctx, '🍅', x - 1 * s, y + 3 * s, 12 * s, -0.2);
   }
+  if (hasOnion) emoji(ctx, '🧅', x + (hasTomato || hasLettuce ? -7 : 0) * s, y - 1 * s, 13 * s, -0.15);
 }
 
 function drawVessel(ctx: CanvasRenderingContext2D, v: VesselItem, x: number, y: number, s: number) {
@@ -202,7 +219,12 @@ function drawVessel(ctx: CanvasRenderingContext2D, v: VesselItem, x: number, y: 
     ellipse(ctx, x, y - 6 * s, 20 * s, 8 * s, '#c3cad1');
     ellipse(ctx, x, y - 6 * s, 16 * s, 6 * s, '#50565e');
     if (v.contents.length) {
-      const color = v.burnt ? '#1c1a19' : v.contents[0] === 'onion' ? C.soupOnion : C.soupTomato;
+      const distinct = new Set(v.contents).size;
+      const color = v.burnt
+        ? '#1c1a19'
+        : distinct > 1
+          ? C.soupMixed
+          : v.contents[0] === 'onion' ? C.soupOnion : C.soupTomato;
       const fill = v.contents.length / 3;
       ellipse(ctx, x, y - 6 * s, 16 * s * (0.55 + fill * 0.45), 6 * s * (0.55 + fill * 0.45), color);
     }
@@ -224,6 +246,37 @@ function drawVessel(ctx: CanvasRenderingContext2D, v: VesselItem, x: number, y: 
       }
     }
   }
+}
+
+function drawBat(ctx: CanvasRenderingContext2D, x: number, y: number, s: number) {
+  ctx.save();
+  ctx.translate(x, y + 4 * s);
+  ctx.rotate(-0.6);
+  ellipse(ctx, 0, 14 * s, 9 * s, 3 * s, 'rgba(0,0,0,0.2)');
+  // cabo + corpo do taco, numa peça só
+  ctx.beginPath();
+  ctx.moveTo(-3.2 * s, 14 * s);
+  ctx.lineTo(-3.2 * s, -6 * s);
+  ctx.quadraticCurveTo(-9 * s, -20 * s, -4.5 * s, -30 * s);
+  ctx.quadraticCurveTo(0, -34 * s, 4.5 * s, -30 * s);
+  ctx.quadraticCurveTo(9 * s, -20 * s, 3.2 * s, -6 * s);
+  ctx.lineTo(3.2 * s, 14 * s);
+  ctx.closePath();
+  ctx.fillStyle = '#d9a05f';
+  ctx.fill();
+  ctx.strokeStyle = '#8a5a33';
+  ctx.lineWidth = 1.2 * s;
+  ctx.stroke();
+  // fita no cabo
+  ctx.strokeStyle = '#7a2b20';
+  ctx.lineWidth = 2.2 * s;
+  for (const dy of [8, 3, -2]) {
+    ctx.beginPath();
+    ctx.moveTo(-3.2 * s, dy * s);
+    ctx.lineTo(3.2 * s, (dy + 2) * s);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawExt(ctx: CanvasRenderingContext2D, x: number, y: number, s: number) {
@@ -259,6 +312,8 @@ function drawItem(ctx: CanvasRenderingContext2D, it: Item, x: number, y: number,
       return drawVessel(ctx, it, x, y, s);
     case 'ext':
       return drawExt(ctx, x, y, s);
+    case 'bat':
+      return drawBat(ctx, x, y, s);
   }
 }
 
@@ -355,12 +410,22 @@ function drawTile(ctx: CanvasRenderingContext2D, gs: GameState, t: Tile) {
     }
     case 'stove': {
       const hot = t.item && (t.item.k === 'pot' || t.item.k === 'pan') && t.item.contents.length > 0 && !t.item.burnt;
-      ellipse(ctx, cx, cy, 22, 14, C.burner);
+      ellipse(ctx, cx, cy, 22, 14, t.stolen ? '#2a2c31' : C.burner);
       ctx.strokeStyle = hot ? `rgba(255,${120 + Math.sin(gs.clock * 10) * 40},40,0.95)` : '#555a63';
       ctx.lineWidth = 3;
       ctx.beginPath();
       ctx.ellipse(cx, cy, 16, 10, 0, 0, Math.PI * 2);
       ctx.stroke();
+      if (t.stolen) {
+        ctx.strokeStyle = 'rgba(220,60,60,0.7)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(cx - 13, cy - 9);
+        ctx.lineTo(cx + 13, cy + 9);
+        ctx.moveTo(cx + 13, cy - 9);
+        ctx.lineTo(cx - 13, cy + 9);
+        ctx.stroke();
+      }
       break;
     }
     case 'serve': {
@@ -731,6 +796,161 @@ function drawHighlight(ctx: CanvasRenderingContext2D, gs: GameState, p: Player) 
   ctx.globalAlpha = 1;
 }
 
+// ─── Ladrão (fase "Assalto na Cozinha") ─────────────────────────────────────
+function drawHeistDoor(ctx: CanvasRenderingContext2D, gs: GameState) {
+  const th = gs.thief;
+  const door = gs.doorTile;
+  if (!th || !door) return;
+  const x = OX + door.x * T;
+  const y = OY + door.y * T;
+  const openK = th.phase === 'entering' ? Math.min(1, 1 - th.t / K.heistEnter) : 1;
+  ctx.save();
+  ctx.translate(x, y - 28);
+  rr(ctx, -17, -28, 34, 42, 4);
+  ctx.fillStyle = '#241812';
+  ctx.fill();
+  ctx.save();
+  ctx.translate(-15 * openK, 0);
+  ctx.transform(1 - openK * 0.75, 0, 0, 1, 0, 0);
+  rr(ctx, -15, -26, 30, 38, 3);
+  ctx.fillStyle = '#7a4a2a';
+  ctx.fill();
+  ctx.strokeStyle = '#4e2f1a';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-15, -26, 30, 38);
+  ellipse(ctx, 9, -4, 2, 2, '#f5d78e');
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawThief(ctx: CanvasRenderingContext2D, gs: GameState, th: ThiefState) {
+  const x = OX + th.x * T;
+  const y = OY + th.y * T;
+  ctx.save();
+  ellipse(ctx, x, y + 2, 20, 8, 'rgba(0,0,0,0.28)');
+
+  if (th.phase === 'stunned') {
+    ellipse(ctx, x + 2, y - 8, 23, 12, '#2b2b34');
+    ellipse(ctx, x + 22, y - 10, 12, 11, '#d79a5c');
+    ellipse(ctx, x + 22, y - 11, 9, 3.2, '#111318');
+    for (let i = 0; i < 3; i++) {
+      const a = gs.clock * 5 + i * ((Math.PI * 2) / 3);
+      emoji(ctx, '⭐', x + 22 + Math.cos(a) * 15, y - 27 + Math.sin(a) * 6, 15);
+    }
+    ctx.restore();
+    return;
+  }
+
+  const bob = Math.abs(Math.sin(gs.clock * 11)) * 3;
+  ellipse(ctx, x - 6, y - 2, 5, 4, '#1c1c22');
+  ellipse(ctx, x + 6, y - 2, 5, 4, '#1c1c22');
+  ellipse(ctx, x, y - 18 - bob, 15, 17, '#2b2b34');
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)';
+  ctx.lineWidth = 2;
+  for (const dx of [-7, 0, 7]) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx, y - 32 - bob);
+    ctx.lineTo(x + dx, y - 4 - bob);
+    ctx.stroke();
+  }
+  if (th.hasPot) {
+    drawItem(ctx, { k: 'pot', contents: [], p: 0, burnt: false, smoke: 0, home: { x: 0, y: 0 } }, x + th.dirX * 15, y - 26 - bob, 0.55);
+  } else {
+    ellipse(ctx, x - th.dirX * 13, y - 22 - bob - th.dirY * 5, 8, 10, '#8a5a33');
+  }
+  const headY = y - 40 - bob;
+  ellipse(ctx, x, headY, 12, 11, '#d79a5c');
+  ellipse(ctx, x, headY - 1, 10, 3.6, '#111318');
+  rr(ctx, x - 11, headY - 14, 22, 8, 4);
+  ctx.fillStyle = '#3a3a44';
+  ctx.fill();
+  ellipse(ctx, x + 9, headY - 15, 5, 5, '#3a3a44');
+  ctx.restore();
+}
+
+/** Deixa a cozinha escura, com uma luz acompanhando cada chef — usa um canvas
+ * auxiliar como máscara (fura buracos claros num véu escuro) e cola por cima. */
+let heistMask: HTMLCanvasElement | null = null;
+function drawHeistLighting(ctx: CanvasRenderingContext2D, gs: GameState, W: number, H: number) {
+  const th = gs.thief;
+  if (!th) return;
+  if (!heistMask) heistMask = document.createElement('canvas');
+  if (heistMask.width !== Math.ceil(W) || heistMask.height !== Math.ceil(H)) {
+    heistMask.width = Math.ceil(W);
+    heistMask.height = Math.ceil(H);
+  }
+  const mctx = heistMask.getContext('2d');
+  if (!mctx) return;
+  mctx.clearRect(0, 0, W, H);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.fillStyle = 'rgba(6,4,3,0.84)';
+  mctx.fillRect(0, 0, W, H);
+  mctx.globalCompositeOperation = 'destination-out';
+  const radius = 165;
+  for (const p of gs.players) {
+    if (p.dead) continue;
+    const px = OX + p.x * T;
+    const py = OY + p.y * T - 20;
+    const g = mctx.createRadialGradient(px, py, radius * 0.12, px, py, radius);
+    g.addColorStop(0, 'rgba(0,0,0,1)');
+    g.addColorStop(0.6, 'rgba(0,0,0,0.92)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    mctx.fillStyle = g;
+    mctx.beginPath();
+    mctx.arc(px, py, radius, 0, Math.PI * 2);
+    mctx.fill();
+  }
+  // um brilho fraco em volta do ladrão — dá pra ver a silhueta, não os detalhes
+  if (th.phase !== 'entering') {
+    const tx = OX + th.x * T;
+    const ty = OY + th.y * T - 18;
+    const g2 = mctx.createRadialGradient(tx, ty, 8, tx, ty, 68);
+    g2.addColorStop(0, 'rgba(0,0,0,0.5)');
+    g2.addColorStop(1, 'rgba(0,0,0,0)');
+    mctx.fillStyle = g2;
+    mctx.beginPath();
+    mctx.arc(tx, ty, 68, 0, Math.PI * 2);
+    mctx.fill();
+  }
+
+  // cola a máscara usando os pixels reais da tela (ignora o zoom aplicado pelo canvas do jogo)
+  const canvas = ctx.canvas;
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(heistMask, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+function drawHeistBanner(ctx: CanvasRenderingContext2D, gs: GameState, W: number) {
+  const th = gs.thief;
+  if (!th || th.phase === 'entering') return;
+  const w = 360;
+  const x = W / 2 - w / 2;
+  const y = HUD_TOP - 46;
+  const pulse = th.phase !== 'stunned' && th.alarmT < 4 ? 1 + Math.max(0, Math.sin(gs.clock * 10)) * 0.05 : 1;
+  ctx.save();
+  ctx.translate(W / 2, y + 20);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-W / 2, -(y + 20));
+  rr(ctx, x, y, w, 42, 20);
+  ctx.fillStyle = th.phase === 'stunned' ? 'rgba(20,95,45,0.92)' : 'rgba(130,20,20,0.92)';
+  ctx.fill();
+  const label = th.phase === 'stunned'
+    ? 'Ladrão nocauteado!'
+    : th.hasPot ? 'Ele pegou a panela — pare-o!' : 'O LADRÃO ESTÁ NA COZINHA!';
+  text(ctx, label, W / 2, y + 15, 15, '#ffffff', { weight: 900 });
+  if (th.phase !== 'stunned') {
+    const ratio = Math.max(0, th.alarmT / K.heistAlarm);
+    rr(ctx, x + 16, y + 25, w - 32, 8, 4);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fill();
+    rr(ctx, x + 16, y + 25, (w - 32) * ratio, 8, 4);
+    ctx.fillStyle = ratio < 0.3 ? '#ffb020' : '#ffffff';
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
 // ─── HUD ────────────────────────────────────────────────────────────────────
 function drawTickets(ctx: CanvasRenderingContext2D, gs: GameState, dt: number) {
   let i = 0;
@@ -779,17 +999,18 @@ function drawTickets(ctx: CanvasRenderingContext2D, gs: GameState, dt: number) {
 
     // ingredientes
     const n = rec.steps.length;
-    const cw = 32;
+    const cw = n > 3 ? (TICKET_W - 8) / n : 32;
+    const iconScale = n > 3 ? cw / 32 : 1;
     const startX = x + TICKET_W / 2 - (n * cw) / 2;
     rec.steps.forEach((st, k) => {
       const bx = startX + k * cw;
       rr(ctx, bx + 2, y + 71, cw - 4, 25, 6);
       ctx.fillStyle = '#efe4d2';
       ctx.fill();
-      if (st.f === 'bun') drawBun(ctx, bx + cw / 2 - 4, y + 84, 0.5);
-      else emoji(ctx, FOOD_EMOJI[st.f], bx + cw / 2 - 4, y + 83, 14);
+      if (st.f === 'bun') drawBun(ctx, bx + cw / 2 - 4, y + 84, 0.5 * iconScale);
+      else emoji(ctx, FOOD_EMOJI[st.f], bx + cw / 2 - 4, y + 83, 14 * iconScale);
       const tool = st.tool === 'knife' ? '🔪' : st.tool === 'pot' ? '🥘' : st.tool === 'pan' ? '🍳' : '';
-      if (tool) emoji(ctx, tool, bx + cw / 2 + 7, y + 89, 10);
+      if (tool) emoji(ctx, tool, bx + cw / 2 + 7 * iconScale, y + 89, 10 * iconScale);
     });
     ctx.restore();
   }
@@ -1390,6 +1611,8 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
       if (Math.floor(f.y) === y) drawItem(ctx, f.item, OX + f.x * T, OY + f.y * T - 4, 0.8);
     }
     for (const p of alive) if (Math.floor(p.y) === y) drawPlayer(ctx, gs, p);
+    if (gs.doorTile && Math.floor(gs.doorTile.y) === y) drawHeistDoor(ctx, gs);
+    if (gs.thief && Math.floor(gs.thief.y) === y) drawThief(ctx, gs, gs.thief);
   }
 
   for (const p of alive) drawHighlight(ctx, gs, p);
@@ -1436,6 +1659,9 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
   if (lv.gap && gs.gapPhase === 'warn' && !gs.over) {
     text(ctx, 'O chão vai abrir!', W / 2, OY + T * 0.2, 26, '#ffffff', { stroke: '#b91c1c' });
   }
+
+  // cozinha escura + luz em volta dos chefs, durante o assalto
+  drawHeistLighting(ctx, gs, W, H);
   ctx.restore();
 
   // HUD
@@ -1443,6 +1669,7 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
   ctx.fillRect(0, 0, W, HUD_TOP - 8);
   drawTickets(ctx, gs, dt);
   drawBottomHud(ctx, gs, W, H);
+  drawHeistBanner(ctx, gs, W);
 
   // contagem inicial
   if (gs.countdown > 0) {

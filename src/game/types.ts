@@ -33,7 +33,12 @@ export interface ExtItem {
   k: 'ext';
   home: Pt;
 }
-export type Item = FoodItem | PlateItem | StackItem | VesselItem | ExtItem;
+/** Taco de beisebol — usado para nocautear o ladrão (fase "Assalto na Cozinha"). */
+export interface BatItem {
+  k: 'bat';
+  home: Pt;
+}
+export type Item = FoodItem | PlateItem | StackItem | VesselItem | ExtItem | BatItem;
 
 export interface Pt {
   x: number;
@@ -64,6 +69,8 @@ export interface Tile {
   fireSpread: number;
   sinkDirty: number; // pratos sujos dentro da pia
   washP: number; // 0..1
+  /** fogão que o ladrão roubou — fica sem panela pelo resto da partida */
+  stolen?: boolean;
 }
 
 export interface Player {
@@ -141,10 +148,15 @@ export interface Particle {
 export type RecipeId =
   | 'soup_tomato'
   | 'soup_onion'
+  | 'soup_mixed'
   | 'salad'
   | 'salad_green'
+  | 'salad_full'
+  | 'sandwich_veggie'
   | 'burger'
-  | 'burger_full';
+  | 'burger_onion'
+  | 'burger_full'
+  | 'burger_deluxe';
 
 export interface Recipe {
   id: RecipeId;
@@ -154,6 +166,15 @@ export interface Recipe {
   time: number;
   /** Passos para mostrar no ticket */
   steps: { f: FoodId; tool: 'knife' | 'pot' | 'pan' | 'none' }[];
+}
+
+/** Configura a fase do ladrão (opcional; ver ThiefState). */
+export interface HeistDef {
+  /** intervalo aleatório (segundos) até a próxima visita do ladrão */
+  minGap: number;
+  maxGap: number;
+  /** quantas panelas ele pode roubar no máximo nessa partida */
+  maxThefts: number;
 }
 
 /** Regras da fase. O layout e o visual vêm da arena escolhida no menu. */
@@ -166,6 +187,7 @@ export interface LevelDef {
   dirtyPlates: boolean;
   stars: [number, number, number];
   gap?: { closed: number; warn: number; open: number };
+  heist?: HeistDef;
 }
 
 // ─── Arenas (mapa + tema visual) ────────────────────────────────────────────
@@ -204,6 +226,26 @@ export interface Avatar {
 
 export type GapPhase = 'closed' | 'warn' | 'open';
 
+// ─── Ladrão (fase "Assalto na Cozinha") ─────────────────────────────────────
+export type ThiefPhase = 'entering' | 'sneaking' | 'fleeing' | 'stunned';
+
+export interface ThiefState {
+  x: number;
+  y: number;
+  dirX: number;
+  dirY: number;
+  phase: ThiefPhase;
+  t: number; // relógio da fase atual (entrando / nocauteado)
+  alarmT: number; // contagem regressiva de 10s enquanto ele está solto na cozinha
+  targetTile: Pt; // a panela que ele veio buscar
+  hasPot: boolean;
+  wanderX: number;
+  wanderY: number;
+  wanderT: number; // tempo até escolher um novo ponto de perambulação
+  doorX: number;
+  doorY: number;
+}
+
 export interface GameState {
   level: LevelDef;
   arena: ArenaDef;
@@ -234,6 +276,11 @@ export interface GameState {
   clock: number;
   solo: boolean;
   shake: number;
+  // ladrão
+  thief: ThiefState | null;
+  doorTile: Pt | null;
+  heistTimer: number; // segundos até a próxima visita
+  heistCount: number; // quantas panelas ele já levou
 }
 
 // ─── Tempos e ajustes (tokens de gameplay) ──────────────────────────────────
@@ -259,4 +306,11 @@ export const TUNING = {
   respawn: 5,
   orderFailPenalty: 10,
   maxOrders: 5,
+  // ladrão
+  heistAlarm: 10, // segundos pra pará-lo depois que ele entra
+  heistEnter: 0.9, // tempo da animação de porta abrindo
+  heistStun: 1.6, // quanto tempo ele fica desacordado
+  heistSpeed: 2.6, // tiles/s — mais lento que o chef, mas erra o caminho
+  heistBatRange: 1.15,
+  heistReward: 15,
 } as const;

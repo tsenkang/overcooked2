@@ -25,7 +25,7 @@ export function Stars({ n, size = 'text-3xl', lit = n }: { n: number; size?: str
 const ACTIONS = [
   { label: 'Andar', p1: ['W', 'A', 'S', 'D'], p2: ['↑', '←', '↓', '→'], pad: 'Analógico' },
   { label: 'Pegar / soltar', p1: ['Espaço'], p2: ['Enter'], pad: 'A' },
-  { label: 'Cortar · lavar · jogar · extintor', p1: ['E'], p2: ['Shift dir.'], pad: 'X' },
+  { label: 'Cortar · lavar · jogar · extintor · taco', p1: ['E'], p2: ['Shift dir.'], pad: 'X' },
   { label: 'Correr (dash)', p1: ['Shift esq.'], p2: ['Ctrl dir.'], pad: 'B' },
 ];
 

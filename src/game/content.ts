@@ -77,6 +77,68 @@ export const RECIPES: Record<RecipeId, Recipe> = {
       { f: 'lettuce', tool: 'knife' },
     ],
   },
+  soup_mixed: {
+    id: 'soup_mixed',
+    name: 'Sopa Mista',
+    parts: ['soup:mixed'],
+    value: 26,
+    time: 90,
+    steps: [
+      { f: 'tomato', tool: 'pot' },
+      { f: 'tomato', tool: 'pot' },
+      { f: 'onion', tool: 'pot' },
+    ],
+  },
+  salad_full: {
+    id: 'salad_full',
+    name: 'Salada Completa',
+    parts: ['lettuce:chopped', 'tomato:chopped', 'onion:chopped'],
+    value: 24,
+    time: 70,
+    steps: [
+      { f: 'lettuce', tool: 'knife' },
+      { f: 'tomato', tool: 'knife' },
+      { f: 'onion', tool: 'knife' },
+    ],
+  },
+  sandwich_veggie: {
+    id: 'sandwich_veggie',
+    name: 'Sanduíche Verde',
+    parts: ['bun:raw', 'lettuce:chopped', 'tomato:chopped'],
+    value: 20,
+    time: 65,
+    steps: [
+      { f: 'bun', tool: 'none' },
+      { f: 'lettuce', tool: 'knife' },
+      { f: 'tomato', tool: 'knife' },
+    ],
+  },
+  burger_onion: {
+    id: 'burger_onion',
+    name: 'X-Cebola',
+    parts: ['bun:raw', 'meat:cooked', 'onion:chopped'],
+    value: 26,
+    time: 85,
+    steps: [
+      { f: 'bun', tool: 'none' },
+      { f: 'meat', tool: 'pan' },
+      { f: 'onion', tool: 'knife' },
+    ],
+  },
+  burger_deluxe: {
+    id: 'burger_deluxe',
+    name: 'X-Tudo',
+    parts: ['bun:raw', 'meat:cooked', 'lettuce:chopped', 'tomato:chopped', 'onion:chopped'],
+    value: 38,
+    time: 110,
+    steps: [
+      { f: 'bun', tool: 'none' },
+      { f: 'meat', tool: 'pan' },
+      { f: 'lettuce', tool: 'knife' },
+      { f: 'tomato', tool: 'knife' },
+      { f: 'onion', tool: 'knife' },
+    ],
+  },
 };
 
 export const LEVELS: LevelDef[] = [
@@ -107,6 +169,26 @@ export const LEVELS: LevelDef[] = [
     dirtyPlates: true,
     stars: [50, 130, 210],
     gap: { closed: 16, warn: 3, open: 11 },
+  },
+  {
+    id: 4,
+    name: 'Fim de Semana Lotado',
+    subtitle: 'Pedido atrás de pedido, pratos sempre sujos — e o chão ainda racha.',
+    recipes: ['soup_mixed', 'salad_full', 'burger_deluxe', 'sandwich_veggie', 'burger_onion'],
+    duration: 220,
+    dirtyPlates: true,
+    stars: [70, 170, 270],
+    gap: { closed: 13, warn: 3, open: 9 },
+  },
+  {
+    id: 5,
+    name: 'Assalto na Cozinha',
+    subtitle: 'Um ladrão vai tentar levar uma panela. Peguem o taco e nocauteiem ele!',
+    recipes: ['soup_tomato', 'soup_onion', 'salad', 'burger'],
+    duration: 220,
+    dirtyPlates: true,
+    stars: [70, 160, 250],
+    heist: { minGap: 22, maxGap: 42, maxThefts: 3 },
   },
 ];
 

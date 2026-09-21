@@ -12,6 +12,8 @@ import type {
   LevelDef,
   PlateItem,
   Player,
+  Pt,
+  ThiefState,
   Tile,
   TileType,
   VesselItem,
@@ -75,6 +77,11 @@ export function createGame(
   const players = [makePlayer(1, s1, avatars[0]), makePlayer(2, s2, avatars[1])];
   if (solo) players[1].active = false;
 
+  // fase do ladrão: o taco e a porta não fazem parte do mapa — são calculados
+  // aqui, então qualquer arena (das 6) funciona com essa fase também.
+  if (level.heist) placeBat(tiles, w, h, s1, s2);
+  const doorTile = level.heist ? pickDoorTile(tiles, w, h, s1, s2) : null;
+
   return {
     level,
     arena,
@@ -105,7 +112,62 @@ export function createGame(
     clock: 0,
     solo,
     shake: 0,
+    thief: null,
+    doorTile,
+    heistTimer: level.heist ? randRange(level.heist.minGap, level.heist.maxGap) : Infinity,
+    heistCount: 0,
   };
+}
+
+function randRange(a: number, b: number): number {
+  return a + Math.random() * (b - a);
+}
+
+/** Canto mais afastado do meio, encostado numa parede — onde a porta vai aparecer. */
+function pickDoorTile(tiles: Tile[][], w: number, h: number, s1: Pt, s2: Pt): Pt {
+  const midx = (s1.x + s2.x) / 2;
+  const midy = (s1.y + s2.y) / 2;
+  let best: Pt | null = null;
+  let bd = -1;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const t = tiles[y][x];
+      if (t.type !== 'floor') continue;
+      const wallAdj = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (ny < 0 || ny >= h || nx < 0 || nx >= w) return false;
+        return isSolid(tiles[ny][nx]);
+      });
+      if (!wallAdj) continue;
+      const d = Math.hypot(x + 0.5 - midx, y + 0.5 - midy);
+      if (d > bd) {
+        bd = d;
+        best = { x: x + 0.5, y: y + 0.5 };
+      }
+    }
+  }
+  return best ?? { x: w / 2, y: h / 2 };
+}
+
+/** Bancada livre mais central — onde o taco de beisebol fica esperando. */
+function placeBat(tiles: Tile[][], w: number, h: number, s1: Pt, s2: Pt) {
+  const midx = (s1.x + s2.x) / 2;
+  const midy = (s1.y + s2.y) / 2;
+  let best: Tile | null = null;
+  let bd = Infinity;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const t = tiles[y][x];
+      if (t.type !== 'counter' || t.item) continue;
+      const d = Math.hypot(x + 0.5 - midx, y + 0.5 - midy);
+      if (d < bd) {
+        bd = d;
+        best = t;
+      }
+    }
+  }
+  if (best) best.item = { k: 'bat', home: { x: best.x, y: best.y } };
 }
 
 function vessel(k: 'pot' | 'pan', x: number, y: number): VesselItem {
@@ -154,18 +216,24 @@ export function vesselBurnLimit(v: VesselItem): number {
 }
 
 function foodToken(f: FoodItem): string | null {
-  if (f.s === 'chopped' && (f.f === 'lettuce' || f.f === 'tomato')) return `${f.f}:chopped`;
+  if (f.s === 'chopped' && (f.f === 'lettuce' || f.f === 'tomato' || f.f === 'onion')) return `${f.f}:chopped`;
   if (f.f === 'bun' && f.s === 'raw') return 'bun:raw';
   if (f.f === 'meat' && f.s === 'cooked') return 'meat:cooked';
   return null;
 }
 
+const SOUP_VEG: FoodId[] = ['tomato', 'onion'];
+
 function vesselAccepts(v: VesselItem, f: FoodItem): boolean {
   if (v.burnt || f.s !== 'chopped') return false;
-  if (v.k === 'pot') {
-    return (f.f === 'tomato' || f.f === 'onion') && v.contents.length < 3 && (v.contents.length === 0 || v.contents[0] === f.f);
-  }
+  if (v.k === 'pot') return SOUP_VEG.includes(f.f) && v.contents.length < 3;
   return f.f === 'meat' && v.contents.length === 0;
+}
+
+/** 'soup:tomato' / 'soup:onion' se a panela é só de um, 'soup:mixed' se misturou. */
+function soupToken(v: VesselItem): string {
+  const distinct = new Set(v.contents);
+  return distinct.size === 1 ? `soup:${v.contents[0]}` : 'soup:mixed';
 }
 
 function resetVessel(v: VesselItem) {
@@ -177,7 +245,7 @@ function resetVessel(v: VesselItem) {
 
 function pour(gs: GameState, plate: PlateItem, v: VesselItem): boolean {
   if (!vesselReady(v)) return false;
-  const tok = v.k === 'pot' ? `soup:${v.contents[0]}` : 'meat:cooked';
+  const tok = v.k === 'pot' ? soupToken(v) : 'meat:cooked';
   if (!canAddPart(plate.parts, tok, gs.level.recipes)) return false;
   plate.parts.push(tok);
   resetVessel(v);
@@ -245,6 +313,7 @@ export function update(gs: GameState, dt: number, pads: [PadState, PadState]) {
   updateStations(gs, dt);
   updateGap(gs, dt);
   updateOrders(gs, dt);
+  updateHeist(gs, dt);
 
   // pratos voltando
   for (let i = gs.pendingPlates.length - 1; i >= 0; i--) {
@@ -633,7 +702,7 @@ function doGrab(gs: GameState, p: Player) {
 function accepts(t: Tile, it: Item): boolean {
   if (t.type === 'counter' || t.type === 'crate') return true;
   if (t.type === 'board') return it.k === 'food' && (it.s === 'raw' || it.s === 'chopped');
-  if (t.type === 'stove') return it.k === 'pot' || it.k === 'pan';
+  if (t.type === 'stove') return !t.stolen && (it.k === 'pot' || it.k === 'pan');
   return false;
 }
 
@@ -693,6 +762,10 @@ function doUse(gs: GameState, p: Player) {
   const H = p.held;
   const t = p.target;
   if (H?.k === 'ext') return;
+  if (H?.k === 'bat') {
+    swingBat(gs, p);
+    return;
+  }
   if (t && t.fire <= 0 && !H) {
     if (t.type === 'board' && t.item?.k === 'food' && t.item.s === 'raw' && CHOPPABLE.includes(t.item.f)) {
       p.working = t;
@@ -918,6 +991,202 @@ function updateGap(gs: GameState, dt: number) {
     gs.gapT = g.closed;
     gs.shake = 0.6;
   }
+}
+
+// ─── Ladrão ─────────────────────────────────────────────────────────────────
+function countAvailablePots(gs: GameState): number {
+  let n = 0;
+  for (const row of gs.tiles) {
+    for (const t of row) if (t.type === 'stove' && t.item?.k === 'pot' && !t.stolen) n++;
+  }
+  return n;
+}
+
+function updateHeist(gs: GameState, dt: number) {
+  const cfg = gs.level.heist;
+  if (!cfg || !gs.doorTile) return;
+
+  if (!gs.thief) {
+    gs.heistTimer -= dt;
+    if (gs.heistTimer <= 0) {
+      if (gs.heistCount < cfg.maxThefts && countAvailablePots(gs) > 1) startHeist(gs);
+      else gs.heistTimer = 8; // ainda pode sobrar panela depois (ex.: incêndio) — verifica de novo mais tarde
+    }
+    return;
+  }
+
+  const th = gs.thief;
+  th.t -= dt;
+
+  if (th.phase === 'entering') {
+    if (th.t <= 0) {
+      th.phase = 'sneaking';
+      th.wanderT = 0;
+      addFloat(gs, th.x, th.y - 0.6, 'O ladrão entrou!', '#ff6b6b', true);
+      gs.shake = 0.4;
+      sfx.warn();
+    }
+    return;
+  }
+
+  if (th.phase === 'stunned') {
+    if (th.t <= 0) {
+      gs.thief = null;
+      gs.heistTimer = randRange(cfg.minGap, cfg.maxGap);
+    }
+    return;
+  }
+
+  // sneaking (indo pegar a panela) ou fleeing (fugindo com ela)
+  th.alarmT -= dt;
+  moveThief(gs, th, dt);
+
+  if (!th.hasPot) {
+    const d = Math.hypot(th.targetTile.x - th.x, th.targetTile.y - th.y);
+    if (d < 0.35) {
+      const tile = tileAt(gs, th.targetTile.x, th.targetTile.y);
+      if (tile) {
+        tile.item = null;
+        tile.stolen = true;
+      }
+      th.hasPot = true;
+      th.phase = 'fleeing';
+      th.wanderT = 0;
+      addFloat(gs, th.x, th.y - 0.6, 'Pegou a panela!', '#ffb020', true);
+      sfx.reject();
+    }
+  } else {
+    const d = Math.hypot(th.doorX - th.x, th.doorY - th.y);
+    if (d < 0.35) {
+      finishHeist(gs);
+      return;
+    }
+  }
+
+  if (th.alarmT <= 0) finishHeist(gs);
+}
+
+function startHeist(gs: GameState) {
+  const door = gs.doorTile!;
+  const candidates: Tile[] = [];
+  for (const row of gs.tiles) {
+    for (const t of row) if (t.type === 'stove' && t.item?.k === 'pot' && !t.stolen) candidates.push(t);
+  }
+  if (candidates.length === 0) return;
+  const target = candidates[Math.floor(Math.random() * candidates.length)];
+  const th: ThiefState = {
+    x: door.x,
+    y: door.y,
+    dirX: 0,
+    dirY: 1,
+    phase: 'entering',
+    t: K.heistEnter,
+    alarmT: K.heistAlarm,
+    targetTile: { x: target.x + 0.5, y: target.y + 0.5 },
+    hasPot: false,
+    wanderX: door.x,
+    wanderY: door.y,
+    wanderT: 0,
+    doorX: door.x,
+    doorY: door.y,
+  };
+  gs.thief = th;
+  addFloat(gs, door.x, door.y - 0.6, 'Alguém abriu a porta...', '#ffb020');
+  sfx.count();
+}
+
+/** Anda até o alvo (panela ou porta) com desvios aleatórios pelo caminho — nunca em linha reta. */
+function moveThief(gs: GameState, th: ThiefState, dt: number) {
+  th.wanderT -= dt;
+  if (th.wanderT <= 0) {
+    th.wanderT = 0.35 + Math.random() * 0.5;
+    const goalX = th.hasPot ? th.doorX : th.targetTile.x;
+    const goalY = th.hasPot ? th.doorY : th.targetTile.y;
+    if (Math.random() < 0.4) {
+      // um desvio bem aleatório — ele hesita, olha pro lado errado
+      th.wanderX = th.x + (Math.random() - 0.5) * 3;
+      th.wanderY = th.y + (Math.random() - 0.5) * 3;
+    } else {
+      th.wanderX = goalX + (Math.random() - 0.5) * 1.2;
+      th.wanderY = goalY + (Math.random() - 0.5) * 1.2;
+    }
+  }
+  const dx = th.wanderX - th.x;
+  const dy = th.wanderY - th.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const speed = K.heistSpeed;
+  const vx = (dx / d) * speed;
+  const vy = (dy / d) * speed;
+  const steps = 3;
+  for (let i = 0; i < steps; i++) {
+    const nx = th.x + (vx * dt) / steps;
+    const ny = th.y + (vy * dt) / steps;
+    if (!isSolid(tileAt(gs, nx, th.y))) th.x = nx;
+    if (!isSolid(tileAt(gs, th.x, ny))) th.y = ny;
+  }
+  if (Math.hypot(vx, vy) > 0.05) {
+    th.dirX = vx / speed;
+    th.dirY = vy / speed;
+  }
+}
+
+function finishHeist(gs: GameState) {
+  const cfg = gs.level.heist!;
+  const th = gs.thief!;
+  if (!th.hasPot) {
+    // o alarme zerou antes dele alcançar a panela: mesmo assim ele sai levando uma
+    const tile = tileAt(gs, th.targetTile.x, th.targetTile.y);
+    if (tile?.item?.k === 'pot') {
+      tile.item = null;
+      tile.stolen = true;
+    }
+  }
+  gs.heistCount++;
+  addFloat(gs, gs.doorTile!.x, gs.doorTile!.y - 0.6, 'Fugiu com a panela!', '#ef4444', true);
+  gs.shake = 0.6;
+  sfx.fail();
+  gs.thief = null;
+  gs.heistTimer = randRange(cfg.minGap, cfg.maxGap);
+}
+
+function swingBat(gs: GameState, p: Player) {
+  const th = gs.thief;
+  if (!th || th.phase === 'entering' || th.phase === 'stunned') {
+    sfx.reject();
+    return;
+  }
+  const dx = th.x - p.x;
+  const dy = th.y - p.y;
+  const d = Math.hypot(dx, dy);
+  if (d > K.heistBatRange) {
+    sfx.reject();
+    return;
+  }
+  const dot = d > 0.0001 ? (dx / d) * p.dirX + (dy / d) * p.dirY : 1;
+  if (dot < 0.15) {
+    sfx.reject();
+    return;
+  }
+  stunThief(gs, th);
+}
+
+function stunThief(gs: GameState, th: ThiefState) {
+  if (th.hasPot) {
+    const tile = tileAt(gs, th.targetTile.x, th.targetTile.y);
+    if (tile?.stolen) {
+      tile.item = vessel('pot', tile.x, tile.y);
+      tile.stolen = false;
+    }
+    th.hasPot = false;
+    addFloat(gs, th.x, th.y - 1, 'Panela recuperada!', '#3ec46d');
+  }
+  th.phase = 'stunned';
+  th.t = K.heistStun;
+  gs.score += K.heistReward;
+  gs.shake = 0.8;
+  addFloat(gs, th.x, th.y - 1.3, `Nocaute! +${K.heistReward}`, '#ffd23f', true);
+  burst(gs, th.x, th.y, '#ffd23f', 22);
+  sfx.done();
 }
 
 // ─── Pratos ─────────────────────────────────────────────────────────────────
