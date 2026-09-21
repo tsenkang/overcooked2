@@ -25,6 +25,40 @@ npm run typecheck
 | Trocar de chef (modo 1 jogador) | Q ou Tab | — | LB / RB |
 | Pausa | Esc ou P | Esc ou P | Start |
 
+## Personalizar os chefs
+
+No menu, cada chef tem um editor com prévia ao vivo (desenhada pelo mesmo código do jogo):
+
+| Item | Opções |
+|---|---|
+| Nome | até 14 caracteres — a inicial aparece na bolinha acima do chef e o nome na tabela de controles |
+| Chapéu | chapéu de chef, bandana, boné, gorro, coroa ou sem chapéu |
+| Uniforme | 8 cores |
+| Cor do chapéu | 8 cores |
+| Pele | 6 tons |
+
+Fica salvo no navegador (`panelaco:avatars:v1`). No modo 1 jogador só aparece o editor do Chef 1.
+
+## Mapas
+
+Antes de cada fase você escolhe em qual cozinha jogar. São 6, com miniatura da planta no menu:
+
+| # | Cozinha | Lugar | Cenário |
+|---|---|---|---|
+| 1 | Izakaya do Bairro | 🇯🇵 Japão | tatame, lanternas de papel, torii e pétalas caindo |
+| 2 | Bistrô da Esquina | 🇫🇷 França | piso xadrez, toldo listrado, torre e telhados |
+| 3 | Cozinha do Mirante | 🇧🇷 Brasil | calçadão em ondas, morros, mar e coqueiros |
+| 4 | Sabor do Baobá | 🌍 África | barro batido com grafismos, baobá e acácias no pôr do sol |
+| 5 | Lanchonete da Rota | 🇺🇸 EUA | piso quadriculado, neon piscando e a estrada passando |
+| 6 | Galeão Faminto | 🏴‍☠️ Alto-mar | convés de tábua, mar em volta do casco, tubarões e gaivotas |
+
+**Toda cozinha é completa**: tem as 5 caixas de ingrediente, panela, frigideira, tábua, pia, escorredor, lixo,
+entrega e extintor. Por isso qualquer fase roda em qualquer mapa — muda o formato do salão e o país, não as regras.
+
+Todas têm também a fenda do meio (coluna `~`), vedada em cima e embaixo por bancada. Nas fases sem `gap` ela é
+chão comum; na fase 3 ela abre e racha a cozinha em duas metades com estações diferentes de cada lado — aí a saída
+é arremessar por cima do buraco.
+
 ## Como funciona
 
 1. **Caixas de madeira** dão ingredientes infinitos.
@@ -44,23 +78,31 @@ npm run typecheck
 | 2 | Lanchonete do Porto | frigideira, salada, pratos sujos e pia | 60 / 150 / 240 |
 | 3 | Cozinha Rachada | o chão do meio abre de tempos em tempos (quem cai renasce em 5 s) | 50 / 130 / 210 |
 
-Cada fase libera com 1 estrela na anterior. O progresso fica salvo no navegador.
+Cada fase libera com 1 estrela na anterior e pode ser jogada em qualquer um dos 6 mapas. O progresso (estrelas e
+recorde) é por fase, não por mapa, e fica salvo no navegador.
 
 ## Estrutura
 
 ```
 src/
-  App.tsx            telas (menu, resultado) e progresso salvo
+  App.tsx            telas (menu, escolha de mapa, resultado) e progresso salvo
   GameCanvas.tsx     loop do jogo, pausa, ajuste de tela
-  ui.tsx             estrelas e tabela de controles
+  ui.tsx             estrelas, controles, prévia do chef e miniatura do mapa
   game/
     types.ts         tipos + TUNING (todos os tempos e velocidades)
-    content.ts       receitas e mapas das fases (ASCII)
+    content.ts       receitas e regras das fases
+    maps.ts          as 6 arenas: mapa ASCII + tema visual
+    avatars.ts       paletas, chapéus e leitura segura do save
     engine.ts        lógica pura: movimento, interação, cozimento, fogo, pedidos
-    render.ts        desenho em canvas
+    render.ts        desenho em canvas (inclui cenários e padrões de piso)
     input.ts         teclado + Gamepad API
     audio.ts         sons sintetizados (sem arquivos)
 docs/ARQUITETURA.md  decisões técnicas
 ```
 
-Para criar uma fase nova, adicione um item em `LEVELS` (`src/game/content.ts`) — a legenda do mapa está no próprio arquivo.
+**Fase nova:** adicione um item em `LEVELS` (`src/game/content.ts`) — só regras, sem mapa.
+
+**Mapa novo:** adicione um item em `ARENAS` (`src/game/maps.ts`). A legenda está no topo do arquivo. Para o mapa
+servir a qualquer fase ele precisa das 5 caixas (`T O L M B`), `K S F W R X Z D P E` e da coluna `~` vedada nas
+duas pontas. Um tema novo entra em `ArenaPattern`/`scene` e ganha seu desenho em `drawFloorPattern` e `drawScene`
+(`src/game/render.ts`).

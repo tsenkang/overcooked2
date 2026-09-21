@@ -79,82 +79,34 @@ export const RECIPES: Record<RecipeId, Recipe> = {
   },
 };
 
-/*
- Legenda do mapa
- .  chão          ~  chão que abre     (espaço) vazio
- #  bancada       K  tábua de corte    S  fogão com panela   F  fogão com frigideira
- W  entrega       R  volta dos pratos  X  lixo               Z  pia        D  escorredor
- P  bancada com prato limpo            E  bancada com extintor
- T O L M B  caixas de tomate, cebola, alface, carne, pão
- 1 2  onde os chefs começam
-*/
 export const LEVELS: LevelDef[] = [
   {
     id: 1,
     name: 'Sopa na Serra',
     subtitle: 'Picar, cozinhar, servir. Não deixe a panela pegar fogo.',
-    map: [
-      '##KK##WW##TTOO',
-      '#............#',
-      'S............#',
-      'S...1....2...P',
-      'S....####....P',
-      '#....####....#',
-      '#............P',
-      'X............R',
-      '###KK###E#####',
-    ],
     recipes: ['soup_tomato', 'soup_onion'],
     duration: 180,
     dirtyPlates: false,
     stars: [60, 140, 220],
-    floor: ['#e9dcc4', '#e0d0b4'],
-    wall: '#8a5a3b',
   },
   {
     id: 2,
     name: 'Lanchonete do Porto',
     subtitle: 'Hambúrguer na chapa e pratos sujos voltando. Alguém lava!',
-    map: [
-      '#LL#BB#MM#WW##',
-      'T............R',
-      'K....#..#....#',
-      'K..1.#..#.2..Z',
-      '#....#..#....D',
-      'F....#..#....#',
-      'F............E',
-      '#............X',
-      '##KK##PP######',
-    ],
     recipes: ['burger', 'burger_full', 'salad', 'salad_green'],
     duration: 200,
     dirtyPlates: true,
     stars: [60, 150, 240],
-    floor: ['#d7e6ea', '#c9dbe0'],
-    wall: '#3f6b7a',
   },
   {
     id: 3,
     name: 'Cozinha Rachada',
     subtitle: 'O chão se abre no meio. Joguem os ingredientes por cima do buraco!',
-    map: [
-      '#TT#MM##BB#WW#',
-      'K.....~~.....R',
-      'K..1..~~..2..#',
-      '#.....~~.....Z',
-      'S..#..~~..#..D',
-      'S.....~~.....#',
-      'F.....~~.....L',
-      'F.....~~.....X',
-      '##E#KK##PP#K##',
-    ],
     recipes: ['soup_tomato', 'burger', 'salad'],
     duration: 210,
     dirtyPlates: true,
     stars: [50, 130, 210],
     gap: { closed: 16, warn: 3, open: 11 },
-    floor: ['#f0d9d2', '#e6cbc2'],
-    wall: '#7a3f4a',
   },
 ];
 

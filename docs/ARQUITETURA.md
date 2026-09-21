@@ -31,3 +31,41 @@ A versão anterior tinha todo o jogo em um único `App.tsx` (1.832 linhas) desen
 - Mais fácil: testar regras, criar fases, ajustar tempos.
 - Mais difícil: acessibilidade dentro do canvas (os menus seguem em HTML acessível).
 - Revisar depois: controles por toque no celular; online multiplayer exigiria mover o motor para um servidor autoritativo.
+
+---
+
+# ADR-002: Separar regras da fase do mapa, e mapas universais
+
+**Status:** Aceito · **Data:** 2026-09-21
+
+## Contexto
+Pedido: deixar o jogador escolher o mapa antes de cada fase, com 6 cozinhas temáticas.
+Até então `LevelDef` carregava o mapa ASCII e as cores junto com as regras (receitas, duração, estrelas), então
+"fase" e "mapa" eram a mesma coisa e não dava para combinar as duas escolhas.
+
+O problema difícil não é desenhar 6 mapas — é que qualquer fase precisa rodar em qualquer mapa. Um mapa sem pia
+quebra a fase 2 (pratos sujos); um sem frigideira quebra o hambúrguer; um sem a fenda esvazia a fase 3.
+
+## Decisão
+- `LevelDef` fica só com as **regras**; o layout e o visual saem para `ArenaDef` (`src/game/maps.ts`).
+  `GameState` passa a carregar os dois, e `createGame(level, arena, solo, avatars)` os combina.
+- **Toda arena é uma cozinha completa**: as 5 caixas de ingrediente, panela, frigideira, tábua, pia, escorredor,
+  lixo, entrega, extintor e a fenda. É a invariante que sustenta "qualquer fase em qualquer mapa".
+- A fenda é sempre uma coluna contígua vedada por bancada nas duas pontas. Em fase sem `gap` ela vira chão comum
+  (inclusive sem a rachadura desenhada), então não vira enfeite sem função.
+- As arenas são validadas por script: largura uniforme, estações obrigatórias presentes, tudo alcançável a partir
+  do spawn, vazio nunca encostando no chão jogável, e — com a fenda aberta — os dois lados separados e cada um com
+  pelo menos uma caixa e uma tábua.
+
+## Opções consideradas
+- **Marcar quais fases aceitam quais mapas:** menos trabalho por mapa, mas vira uma matriz de compatibilidade que
+  o jogador não enxerga e que quebra calado quando alguém adiciona receita nova.
+- **Gerar as estações que faltam em tempo de execução:** esconderia erro de layout e mudaria a cozinha sem o
+  jogador entender por quê.
+
+## Consequências
+- Mais fácil: cada mapa novo é um item em `ARENAS` + um caso nos dois `switch` de tema; nada na lógica.
+- Mais caro: todo mapa carrega estações que certas fases não usam (pia na fase 1, por exemplo). É espaço ocupado
+  em troca de composição livre — aceitável porque a cozinha continua legível.
+- A vigiar: o progresso é por fase, não por (fase, mapa). Se um mapa se mostrar bem mais fácil que os outros, o
+  recorde da fase deixa de comparar coisas iguais e aí vale separar.

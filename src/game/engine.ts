@@ -1,7 +1,10 @@
 import { sfx } from './audio';
 import { CHOPPABLE, RECIPES, canAddPart, matchRecipe } from './content';
 import type { PadState } from './input';
+import { DEFAULT_AVATARS, avatarLabel } from './avatars';
 import type {
+  ArenaDef,
+  Avatar,
   FoodId,
   FoodItem,
   GameState,
@@ -18,16 +21,21 @@ import { TUNING as K } from './types';
 // ─── Criação ────────────────────────────────────────────────────────────────
 const CRATES: Record<string, FoodId> = { T: 'tomato', O: 'onion', L: 'lettuce', M: 'meat', B: 'bun' };
 
-export function createGame(level: LevelDef, solo: boolean): GameState {
-  const h = level.map.length;
-  const w = level.map[0].length;
+export function createGame(
+  level: LevelDef,
+  arena: ArenaDef,
+  solo: boolean,
+  avatars: [Avatar, Avatar] = DEFAULT_AVATARS,
+): GameState {
+  const h = arena.map.length;
+  const w = arena.map[0].length;
   const tiles: Tile[][] = [];
   const spawns: Record<string, { x: number; y: number }> = {};
 
   for (let y = 0; y < h; y++) {
     const row: Tile[] = [];
     for (let x = 0; x < w; x++) {
-      const c = level.map[y][x] ?? ' ';
+      const c = arena.map[y][x] ?? ' ';
       let type: TileType = 'floor';
       let item: Item | null = null;
       let crateFood: FoodId | undefined;
@@ -64,14 +72,12 @@ export function createGame(level: LevelDef, solo: boolean): GameState {
 
   const s1 = spawns['1'] ?? { x: 2.5, y: 2.5 };
   const s2 = spawns['2'] ?? { x: w - 2.5, y: 2.5 };
-  const players = [
-    makePlayer(1, s1, '#2f7de1', '#ffd23f', '1'),
-    makePlayer(2, s2, '#ef5a3c', '#7ee0c3', '2'),
-  ];
+  const players = [makePlayer(1, s1, avatars[0]), makePlayer(2, s2, avatars[1])];
   if (solo) players[1].active = false;
 
   return {
     level,
+    arena,
     w,
     h,
     tiles,
@@ -106,10 +112,12 @@ function vessel(k: 'pot' | 'pan', x: number, y: number): VesselItem {
   return { k, contents: [], p: 0, burnt: false, smoke: 0, home: { x, y } };
 }
 
-function makePlayer(id: number, s: { x: number; y: number }, body: string, accent: string, label: string): Player {
+function makePlayer(id: number, s: { x: number; y: number }, av: Avatar): Player {
   return {
     id, x: s.x, y: s.y, vx: 0, vy: 0, dirX: 0, dirY: 1, held: null, target: null, working: null,
-    dashT: 0, dashCd: 0, walk: 0, spraying: false, dead: 0, spawn: { ...s }, body, accent, label, active: true,
+    dashT: 0, dashCd: 0, walk: 0, spraying: false, dead: 0, spawn: { ...s },
+    body: av.body, accent: av.accent, skin: av.skin, hat: av.hat, name: av.name,
+    label: avatarLabel(av, id), active: true,
   };
 }
 

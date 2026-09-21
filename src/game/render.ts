@@ -1,6 +1,6 @@
 import { RECIPES } from './content';
 import { potDone, vesselBurnLimit, vesselReady } from './engine';
-import type { FoodId, FoodItem, GameState, Item, Player, Tile, VesselItem } from './types';
+import type { ArenaDef, FoodId, FoodItem, GameState, HatId, Item, Player, Tile, VesselItem } from './types';
 import { TUNING as K } from './types';
 
 // ─── Tokens visuais ─────────────────────────────────────────────────────────
@@ -8,7 +8,8 @@ export const T = 64; // px por tile
 const LIFT = 20; // altura das bancadas
 const HUD_TOP = 124;
 const HUD_BOTTOM = 72;
-const PAD = 28;
+const PAD = 44;
+const SCENE = 62; // faixa do cenário temático, entre o HUD e a cozinha
 const TICKET_W = 124;
 const TICKET_GAP = 10;
 
@@ -33,7 +34,6 @@ const C = {
   bunBot: '#d58f3f',
   patty: '#7a4a2a',
   lettuce: '#64c24a',
-  skin: '#ffd9b3',
 };
 
 const FOOD_EMOJI: Record<FoodId, string> = {
@@ -45,10 +45,10 @@ const FOOD_EMOJI: Record<FoodId, string> = {
 };
 
 export function worldSize(gs: GameState) {
-  return { W: gs.w * T + PAD * 2, H: HUD_TOP + LIFT + gs.h * T + HUD_BOTTOM };
+  return { W: gs.w * T + PAD * 2, H: HUD_TOP + SCENE + LIFT + gs.h * T + HUD_BOTTOM };
 }
 const OX = PAD;
-const OY = HUD_TOP + LIFT;
+const OY = HUD_TOP + SCENE + LIFT;
 
 // ─── Utilitários ────────────────────────────────────────────────────────────
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -294,7 +294,7 @@ function drawTile(ctx: CanvasRenderingContext2D, gs: GameState, t: Tile) {
   const sx = OX + t.x * T;
   const sy = OY + t.y * T;
   const topY = sy - LIFT;
-  const wall = gs.level.wall;
+  const wall = gs.arena.wall;
 
   // frente
   rr(ctx, sx, sy + T - LIFT - 4, T, LIFT + 4, 3);
@@ -303,13 +303,13 @@ function drawTile(ctx: CanvasRenderingContext2D, gs: GameState, t: Tile) {
   ctx.fillStyle = 'rgba(0,0,0,0.12)';
   ctx.fillRect(sx, sy + T - 6, T, 6);
   // topo
-  let top = C.top;
+  let top = gs.arena.top;
   if (t.type === 'stove') top = C.stove;
   if (t.type === 'serve') top = C.serve;
   rr(ctx, sx + 1, topY, T - 2, T - 2, 5);
   ctx.fillStyle = top;
   ctx.fill();
-  ctx.strokeStyle = t.type === 'stove' ? '#2b2e34' : C.topLine;
+  ctx.strokeStyle = t.type === 'stove' ? '#2b2e34' : gs.arena.topLine;
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -501,6 +501,150 @@ function drawFire(ctx: CanvasRenderingContext2D, gs: GameState, cx: number, cy: 
 }
 
 // ─── Chefs ──────────────────────────────────────────────────────────────────
+// ─── Boneco do chef (compartilhado entre o jogo e a prévia do menu) ─────────
+export interface ChefLook {
+  body: string;
+  accent: string;
+  skin: string;
+  hat: HatId;
+}
+
+function chefFeet(ctx: CanvasRenderingContext2D, x: number, y: number, step: number) {
+  ellipse(ctx, x - 7, y - 2 + step, 6, 4, '#3b2a22');
+  ellipse(ctx, x + 7, y - 2 - step, 6, 4, '#3b2a22');
+}
+
+function chefBody(ctx: CanvasRenderingContext2D, look: ChefLook, x: number, y: number, bob: number) {
+  ellipse(ctx, x, y - 20 - bob, 17, 19, look.body);
+  // avental
+  ctx.beginPath();
+  ctx.ellipse(x, y - 16 - bob, 12, 13, 0, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.fillStyle = '#ffffff';
+  ctx.fill();
+}
+
+function chefHead(
+  ctx: CanvasRenderingContext2D, look: ChefLook, x: number, headY: number,
+  dirX: number, dirY: number, showFace: boolean,
+) {
+  ellipse(ctx, x, headY, 14, 13, look.skin);
+  if (!showFace) return;
+  const ex = dirX * 5;
+  const ey = dirY * 2;
+  ellipse(ctx, x - 5 + ex, headY + 1 + ey, 2.3, 3, C.ink);
+  ellipse(ctx, x + 5 + ex, headY + 1 + ey, 2.3, 3, C.ink);
+  ellipse(ctx, x - 9 + ex, headY + 5 + ey, 2.5, 1.5, 'rgba(255,120,120,0.5)');
+  ellipse(ctx, x + 9 + ex, headY + 5 + ey, 2.5, 1.5, 'rgba(255,120,120,0.5)');
+}
+
+/** Meia-elipse cobrindo o alto da cabeça (base de bandana, boné e gorro). */
+function domeTop(ctx: CanvasRenderingContext2D, x: number, cy: number, rx: number, ry: number, fill: string) {
+  ctx.beginPath();
+  ctx.ellipse(x, cy, rx, ry, 0, Math.PI, Math.PI * 2);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function chefHat(ctx: CanvasRenderingContext2D, look: ChefLook, x: number, headY: number, dirX: number) {
+  const a = look.accent;
+  switch (look.hat) {
+    case 'toque': {
+      rr(ctx, x - 12, headY - 16, 24, 8, 3);
+      ctx.fillStyle = a;
+      ctx.fill();
+      for (const [dx, dy, r] of [[-8, -21, 8], [8, -21, 8], [0, -26, 10]]) {
+        ellipse(ctx, x + dx, headY + dy, r, r, '#ffffff');
+      }
+      break;
+    }
+    case 'bandana': {
+      domeTop(ctx, x, headY - 1, 14.5, 13, a);
+      rr(ctx, x - 14.5, headY - 7, 29, 5, 2);
+      ctx.fillStyle = shade(a, -28);
+      ctx.fill();
+      // nó lateral
+      ellipse(ctx, x + 14, headY - 4, 4, 4, a);
+      ctx.beginPath();
+      ctx.moveTo(x + 14, headY - 5);
+      ctx.lineTo(x + 23, headY - 9);
+      ctx.lineTo(x + 22, headY + 1);
+      ctx.closePath();
+      ctx.fillStyle = a;
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      for (const [dx, dy] of [[-7, -10], [1, -13], [8, -9]]) {
+        ctx.beginPath();
+        ctx.arc(x + dx, headY + dy, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'cap': {
+      domeTop(ctx, x, headY - 2, 14, 12, a);
+      ellipse(ctx, x + dirX * 11, headY - 2, 12.5, 4.5, shade(a, -32));
+      ellipse(ctx, x, headY - 13, 2.6, 2.6, shade(a, -45));
+      break;
+    }
+    case 'beanie': {
+      domeTop(ctx, x, headY - 3, 14, 14, a);
+      rr(ctx, x - 14, headY - 7, 28, 6, 3);
+      ctx.fillStyle = shade(a, 20);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+      ctx.lineWidth = 1;
+      for (let i = -9; i <= 9; i += 4.5) {
+        ctx.beginPath();
+        ctx.moveTo(x + i, headY - 16);
+        ctx.lineTo(x + i, headY - 7);
+        ctx.stroke();
+      }
+      ellipse(ctx, x, headY - 19, 5, 5, '#ffffff');
+      break;
+    }
+    case 'crown': {
+      const cy = headY - 11;
+      ctx.beginPath();
+      ctx.moveTo(x - 12, cy + 5);
+      ctx.lineTo(x - 12, cy - 7);
+      ctx.lineTo(x - 6, cy - 1);
+      ctx.lineTo(x, cy - 9);
+      ctx.lineTo(x + 6, cy - 1);
+      ctx.lineTo(x + 12, cy - 7);
+      ctx.lineTo(x + 12, cy + 5);
+      ctx.closePath();
+      ctx.fillStyle = a;
+      ctx.fill();
+      ctx.strokeStyle = shade(a, -50);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ellipse(ctx, x, cy + 1, 2, 2, '#ffffff');
+      break;
+    }
+    case 'none':
+      domeTop(ctx, x, headY, 14.5, 12, shade(look.skin, -115));
+      break;
+  }
+}
+
+/** Chef paradinho de frente — usado na tela de personalização. */
+export function drawAvatarPreview(
+  ctx: CanvasRenderingContext2D, look: ChefLook, cx: number, cy: number, scale = 1, wobble = 0,
+) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(scale, scale);
+  const bob = Math.sin(wobble) * 1.6;
+  ellipse(ctx, 0, 2, 20, 8, 'rgba(0,0,0,0.18)');
+  chefFeet(ctx, 0, 0, 0);
+  chefBody(ctx, look, 0, 0, bob);
+  ellipse(ctx, -14, -18 - bob, 5, 5, look.skin);
+  ellipse(ctx, 14, -18 - bob, 5, 5, look.skin);
+  const headY = -42 - bob;
+  chefHead(ctx, look, 0, headY, 0, 0, true);
+  chefHat(ctx, look, 0, headY, 0);
+  ctx.restore();
+}
+
 function drawPlayer(ctx: CanvasRenderingContext2D, gs: GameState, p: Player) {
   const x = OX + p.x * T;
   const y = OY + p.y * T;
@@ -524,45 +668,27 @@ function drawPlayer(ctx: CanvasRenderingContext2D, gs: GameState, p: Player) {
   const drawHeld = () => {
     if (!p.held) {
       // mãozinhas
-      ellipse(ctx, x + p.dirX * 14 - p.dirY * 12, y - 20 - bob + p.dirY * 4, 5, 5, C.skin);
-      ellipse(ctx, x + p.dirX * 14 + p.dirY * 12, y - 20 - bob + p.dirY * 4, 5, 5, C.skin);
+      ellipse(ctx, x + p.dirX * 14 - p.dirY * 12, y - 20 - bob + p.dirY * 4, 5, 5, p.skin);
+      ellipse(ctx, x + p.dirX * 14 + p.dirY * 12, y - 20 - bob + p.dirY * 4, 5, 5, p.skin);
       return;
     }
     const s = p.held.k === 'stack' ? 0.8 : p.held.k === 'pot' ? 0.75 : 0.85;
     drawItem(ctx, p.held, hx, hy, s);
-    ellipse(ctx, hx - 16 * s, hy + 2, 5, 5, C.skin);
-    ellipse(ctx, hx + 16 * s, hy + 2, 5, 5, C.skin);
+    ellipse(ctx, hx - 16 * s, hy + 2, 5, 5, p.skin);
+    ellipse(ctx, hx + 16 * s, hy + 2, 5, 5, p.skin);
   };
 
   if (facingUp) drawHeld();
 
+  const look: ChefLook = { body: p.body, accent: p.accent, skin: p.skin, hat: p.hat };
   // pés
   const step = moving ? Math.sin(p.walk) * 4 : 0;
-  ellipse(ctx, x - 7, y - 2 + step, 6, 4, '#3b2a22');
-  ellipse(ctx, x + 7, y - 2 - step, 6, 4, '#3b2a22');
-  // corpo
-  ellipse(ctx, x, y - 20 - bob, 17, 19, p.body);
-  // avental
-  ctx.beginPath();
-  ctx.ellipse(x, y - 16 - bob, 12, 13, 0, 0.15 * Math.PI, 0.85 * Math.PI);
-  ctx.fillStyle = '#ffffff';
-  ctx.fill();
+  chefFeet(ctx, x, y, step);
+  chefBody(ctx, look, x, y, bob);
   // cabeça
   const headY = y - 42 - bob;
-  ellipse(ctx, x, headY, 14, 13, C.skin);
-  if (!facingUp) {
-    const ex = p.dirX * 5;
-    const ey = p.dirY * 2;
-    ellipse(ctx, x - 5 + ex, headY + 1 + ey, 2.3, 3, C.ink);
-    ellipse(ctx, x + 5 + ex, headY + 1 + ey, 2.3, 3, C.ink);
-    ellipse(ctx, x - 9 + ex, headY + 5 + ey, 2.5, 1.5, 'rgba(255,120,120,0.5)');
-    ellipse(ctx, x + 9 + ex, headY + 5 + ey, 2.5, 1.5, 'rgba(255,120,120,0.5)');
-  }
-  // chapéu de chef
-  rr(ctx, x - 12, headY - 16, 24, 8, 3);
-  ctx.fillStyle = p.accent;
-  ctx.fill();
-  for (const [dx, dy, r] of [[-8, -21, 8], [8, -21, 8], [0, -26, 10]]) ellipse(ctx, x + dx, headY + dy, r, r, '#ffffff');
+  chefHead(ctx, look, x, headY, p.dirX, p.dirY, !facingUp);
+  chefHat(ctx, look, x, headY, p.dirX);
 
   if (!facingUp) drawHeld();
 
@@ -716,16 +842,494 @@ function drawBottomHud(ctx: CanvasRenderingContext2D, gs: GameState, W: number, 
 }
 
 // ─── Cena completa ──────────────────────────────────────────────────────────
+// ─── Temas das arenas ───────────────────────────────────────────────────────
+
+/** Ruído estável por tile: a mesma tábua tem sempre o mesmo veio. */
+function hash2(x: number, y: number) {
+  const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+/** Textura desenhada por cima da cor do chão. */
+function drawFloorPattern(ctx: CanvasRenderingContext2D, ar: ArenaDef, x: number, y: number, sx: number, sy: number) {
+  switch (ar.pattern) {
+    case 'tatami': {
+      // cada tile é um tatame: trama fina + debrum de pano
+      ctx.strokeStyle = 'rgba(90,70,35,0.16)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const horiz = (x + y) % 2 === 0;
+      for (let i = 7; i < T; i += 7) {
+        if (horiz) { ctx.moveTo(sx + 3, sy + i); ctx.lineTo(sx + T - 3, sy + i); }
+        else { ctx.moveTo(sx + i, sy + 3); ctx.lineTo(sx + i, sy + T - 3); }
+      }
+      ctx.stroke();
+      ctx.fillStyle = '#2f4f3a';
+      if (horiz) { ctx.fillRect(sx, sy, T, 3); ctx.fillRect(sx, sy + T - 3, T, 3); }
+      else { ctx.fillRect(sx, sy, 3, T); ctx.fillRect(sx + T - 3, sy, 3, T); }
+      break;
+    }
+    case 'checker': {
+      // ladrilho de bistrô: rejunte + brilho no canto
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(sx + 0.5, sy + 0.5, T - 1, T - 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.10)';
+      ctx.beginPath();
+      ctx.moveTo(sx + 4, sy + 4);
+      ctx.lineTo(sx + 22, sy + 4);
+      ctx.lineTo(sx + 4, sy + 22);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'calcada': {
+      // calçadão em ondas: as curvas se emendam de tile em tile
+      ctx.strokeStyle = 'rgba(45,35,28,0.26)';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'butt';
+      ctx.beginPath();
+      for (let i = 0; i < 2; i++) {
+        const oy = sy + 16 + i * 32;
+        ctx.moveTo(sx, oy);
+        ctx.bezierCurveTo(sx + T * 0.25, oy - 13, sx + T * 0.75, oy + 13, sx + T, oy);
+      }
+      ctx.stroke();
+      break;
+    }
+    case 'mudcloth': {
+      // grafismo geométrico sobre barro batido
+      ctx.strokeStyle = 'rgba(70,35,15,0.30)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const step = T / 4;
+      for (let i = 0; i < 4; i++) {
+        const px = sx + i * step;
+        ctx.moveTo(px, sy + (i % 2 ? 24 : 12));
+        ctx.lineTo(px + step, sy + (i % 2 ? 12 : 24));
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(70,35,15,0.22)';
+      for (let i = 0; i < 3; i++) ctx.fillRect(sx + 11 + i * 17, sy + T - 17, 5, 5);
+      break;
+    }
+    case 'diner': {
+      // piso encerado de lanchonete
+      const g = ctx.createLinearGradient(sx, sy, sx + T, sy + T);
+      g.addColorStop(0, 'rgba(255,255,255,0.18)');
+      g.addColorStop(0.5, 'rgba(255,255,255,0.02)');
+      g.addColorStop(1, 'rgba(0,0,0,0.07)');
+      ctx.fillStyle = g;
+      ctx.fillRect(sx, sy, T, T);
+      break;
+    }
+    case 'deck': {
+      // tábuas do convés com veio e pregos
+      ctx.strokeStyle = 'rgba(85,50,22,0.40)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy + T - 1);
+      ctx.lineTo(sx + T, sy + T - 1);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(130,85,42,0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < 2; i++) {
+        const oy = sy + 18 + i * 22 + hash2(x, y + i * 7) * 7;
+        ctx.moveTo(sx + 5, oy);
+        ctx.lineTo(sx + T - 5, oy);
+      }
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(60,38,18,0.5)';
+      for (const dx of [7, T - 7]) {
+        ctx.beginPath();
+        ctx.arc(sx + dx, sy + T - 8, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+  }
+}
+
+/** Água: usada nos tiles vazios do galeão. */
+function drawWater(ctx: CanvasRenderingContext2D, clock: number, sx: number, sy: number) {
+  ctx.fillStyle = '#12607a';
+  ctx.fillRect(sx, sy, T, T);
+  ctx.strokeStyle = 'rgba(255,255,255,0.20)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < 2; i++) {
+    const oy = sy + 20 + i * 26;
+    const w0 = Math.sin(clock * 1.5 + sx * 0.05 + i) * 3;
+    const w1 = Math.sin(clock * 1.5 + (sx + T) * 0.05 + i) * 3;
+    ctx.moveTo(sx, oy + w0);
+    ctx.bezierCurveTo(sx + T * 0.3, oy - 6 + w0, sx + T * 0.7, oy + 6 + w1, sx + T, oy + w1);
+  }
+  ctx.stroke();
+}
+
+/** Fundo da tela inteira (atrás de tudo). */
+function drawBackground(ctx: CanvasRenderingContext2D, gs: GameState, W: number, H: number) {
+  const ar = gs.arena;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  if (ar.sea) {
+    g.addColorStop(0, '#0d4d62');
+    g.addColorStop(1, '#072e3d');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 12; i++) {
+      const base = HUD_TOP + i * 64;
+      ctx.beginPath();
+      for (let x = 0; x <= W; x += 14) {
+        const yy = base + Math.sin(x * 0.02 + gs.clock * 1.1 + i) * 5;
+        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+    return;
+  }
+  g.addColorStop(0, shade(ar.wall, -30));
+  g.addColorStop(1, shade(ar.wall, -60));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function hill(ctx: CanvasRenderingContext2D, x: number, base: number, w: number, h: number, fill: string) {
+  ctx.beginPath();
+  ctx.moveTo(x - w, base);
+  ctx.quadraticCurveTo(x - w * 0.35, base - h * 1.25, x, base - h);
+  ctx.quadraticCurveTo(x + w * 0.35, base - h * 1.25, x + w, base);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+/**
+ * Cenário do país, na faixa entre o HUD e a cozinha.
+ * Tudo em silhueta: precisa ler bem em 62 px de altura.
+ */
+function drawScene(ctx: CanvasRenderingContext2D, gs: GameState, W: number) {
+  const ar = gs.arena;
+  const top = HUD_TOP;
+  const base = HUD_TOP + SCENE;
+  const t = gs.clock;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, top, W, SCENE);
+  ctx.clip();
+
+  const sky = ctx.createLinearGradient(0, top, 0, base);
+  switch (ar.scene) {
+    case 'japan': {
+      sky.addColorStop(0, '#3a2b52');
+      sky.addColorStop(1, '#8c4a63');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE);
+      // monte ao fundo
+      hill(ctx, W * 0.22, base, 120, 40, 'rgba(30,22,45,0.55)');
+      hill(ctx, W * 0.78, base, 150, 30, 'rgba(30,22,45,0.45)');
+      // torii
+      const tx = W * 0.5;
+      ctx.fillStyle = '#c0392b';
+      ctx.fillRect(tx - 34, base - 40, 7, 40);
+      ctx.fillRect(tx + 27, base - 40, 7, 40);
+      ctx.fillRect(tx - 46, base - 46, 92, 7);
+      ctx.fillRect(tx - 38, base - 32, 76, 5);
+      // lanternas balançando
+      for (let i = 0; i < 6; i++) {
+        const lx = 40 + i * ((W - 80) / 5);
+        const sw = Math.sin(t * 1.3 + i) * 3;
+        ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(lx, top);
+        ctx.lineTo(lx + sw, top + 12);
+        ctx.stroke();
+        ellipse(ctx, lx + sw, top + 21, 8, 10, '#e8483c');
+        ctx.fillStyle = 'rgba(0,0,0,0.35)';
+        ctx.fillRect(lx + sw - 8, top + 20, 16, 2);
+      }
+      // pétalas
+      ctx.fillStyle = 'rgba(255,205,220,0.85)';
+      for (let i = 0; i < 14; i++) {
+        const px = (i * 97 + t * 26) % W;
+        const py = top + ((i * 31 + t * 13) % SCENE);
+        ctx.beginPath();
+        ctx.ellipse(px, py, 3, 2, i, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case 'france': {
+      sky.addColorStop(0, '#1b2a4a');
+      sky.addColorStop(1, '#5b6fa0');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE);
+      // torre
+      const ex = W * 0.5;
+      ctx.fillStyle = 'rgba(16,20,34,0.88)';
+      ctx.beginPath();
+      ctx.moveTo(ex - 20, base);
+      ctx.quadraticCurveTo(ex - 9, base - 26, ex - 5, base - 44);
+      ctx.lineTo(ex - 1.5, base - 60);
+      ctx.lineTo(ex + 1.5, base - 60);
+      ctx.lineTo(ex + 5, base - 44);
+      ctx.quadraticCurveTo(ex + 9, base - 26, ex + 20, base);
+      ctx.closePath();
+      ctx.fill();
+      // plataformas + arco da base
+      ctx.fillRect(ex - 14, base - 28, 28, 3.5);
+      ctx.fillRect(ex - 7, base - 44, 14, 3);
+      ctx.clearRect(ex - 9, base - 1, 18, 1);
+      // prédios
+      ctx.fillStyle = 'rgba(18,22,38,0.6)';
+      for (let i = 0; i < 9; i++) {
+        const bx = i * (W / 9);
+        const bh = 16 + ((i * 7) % 5) * 5;
+        if (Math.abs(bx + W / 18 - ex) < 46) continue;
+        ctx.fillRect(bx, base - bh, W / 9 - 8, bh);
+      }
+      // toldo listrado na frente
+      const stripe = 22;
+      for (let i = 0; i * stripe < W; i++) {
+        ctx.fillStyle = i % 2 ? '#f4f1ea' : '#b8352f';
+        ctx.fillRect(i * stripe, base - 13, stripe, 13);
+      }
+      ctx.fillStyle = 'rgba(0,0,0,0.18)';
+      ctx.fillRect(0, base - 3, W, 3);
+      break;
+    }
+    case 'brazil': {
+      sky.addColorStop(0, '#f0902f');
+      sky.addColorStop(1, '#f6c96a');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE);
+      ellipse(ctx, W * 0.5, base - 6, 26, 26, 'rgba(255,240,180,0.9)');
+      // morros
+      hill(ctx, W * 0.24, base, 90, 46, 'rgba(22,70,45,0.8)');
+      hill(ctx, W * 0.36, base, 60, 30, 'rgba(18,58,38,0.85)');
+      hill(ctx, W * 0.72, base, 110, 40, 'rgba(22,70,45,0.75)');
+      // mar entre os morros
+      ctx.fillStyle = 'rgba(30,110,130,0.55)';
+      ctx.fillRect(0, base - 10, W, 10);
+      // coqueiros
+      for (const cx of [W * 0.1, W * 0.9]) {
+        ctx.strokeStyle = '#4a3320';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(cx, base);
+        ctx.quadraticCurveTo(cx + 5, base - 24, cx + 2, base - 40);
+        ctx.stroke();
+        ctx.fillStyle = '#1f6b3a';
+        for (let i = 0; i < 5; i++) {
+          const ang = -Math.PI / 2 + (i - 2) * 0.55 + Math.sin(t * 1.1 + i) * 0.05;
+          ctx.save();
+          ctx.translate(cx + 2, base - 40);
+          ctx.rotate(ang);
+          ctx.beginPath();
+          ctx.ellipse(13, 0, 13, 4, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+      break;
+    }
+    case 'africa': {
+      sky.addColorStop(0, '#e0622e');
+      sky.addColorStop(1, '#f2ae55');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE);
+      ellipse(ctx, W * 0.5, base - 12, 30, 30, 'rgba(255,225,150,0.95)');
+      ctx.fillStyle = 'rgba(60,30,15,0.5)';
+      ctx.fillRect(0, base - 8, W, 8);
+      // baobá
+      const bx = W * 0.26;
+      ctx.fillStyle = 'rgba(48,26,14,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(bx - 13, base);
+      ctx.lineTo(bx - 7, base - 30);
+      ctx.lineTo(bx + 7, base - 30);
+      ctx.lineTo(bx + 13, base);
+      ctx.closePath();
+      ctx.fill();
+      for (let i = 0; i < 5; i++) {
+        const ang = -Math.PI / 2 + (i - 2) * 0.5;
+        ctx.save();
+        ctx.translate(bx, base - 30);
+        ctx.rotate(ang);
+        ctx.fillRect(0, -2, 22, 4);
+        ctx.restore();
+      }
+      ellipse(ctx, bx, base - 38, 30, 9, 'rgba(48,26,14,0.9)');
+      // acácias
+      for (const ax of [W * 0.66, W * 0.85]) {
+        ctx.fillStyle = 'rgba(48,26,14,0.8)';
+        ctx.fillRect(ax - 2, base - 22, 4, 22);
+        ctx.beginPath();
+        ctx.moveTo(ax - 20, base - 22);
+        ctx.lineTo(ax + 20, base - 22);
+        ctx.lineTo(ax, base - 32);
+        ctx.closePath();
+        ctx.fill();
+      }
+      break;
+    }
+    case 'usa': {
+      sky.addColorStop(0, '#141c33');
+      sky.addColorStop(1, '#2d3c63');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE);
+      // estrada
+      ctx.fillStyle = '#2a2a30';
+      ctx.fillRect(0, base - 16, W, 16);
+      ctx.fillStyle = '#e8c33a';
+      for (let i = 0; i * 44 < W; i++) ctx.fillRect(i * 44 + ((t * 40) % 44), base - 9, 22, 3);
+      // letreiro de neon
+      const nx = W * 0.5;
+      const on = Math.sin(t * 3) > -0.6;
+      ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(nx, top + 4);
+      ctx.lineTo(nx, top + 14);
+      ctx.stroke();
+      rr(ctx, nx - 52, top + 14, 104, 28, 6);
+      ctx.fillStyle = '#14182b';
+      ctx.fill();
+      ctx.strokeStyle = on ? '#ff4d6d' : 'rgba(255,77,109,0.3)';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+      text(ctx, 'ROTA 66', nx, top + 29, 17, on ? '#ffe066' : 'rgba(255,224,102,0.35)');
+      // postes
+      for (const px of [W * 0.12, W * 0.88]) {
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(px - 2, base - 40, 4, 40);
+        ellipse(ctx, px, base - 42, 7, 5, on ? 'rgba(255,230,150,0.9)' : 'rgba(255,230,150,0.4)');
+      }
+      break;
+    }
+    case 'ship': {
+      sky.addColorStop(0, '#6fc3d6');
+      sky.addColorStop(1, '#cdeaf0');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, top, W, SCENE * 0.45);
+      // mar
+      const seaTop = top + SCENE * 0.45;
+      const sg = ctx.createLinearGradient(0, seaTop, 0, base);
+      sg.addColorStop(0, '#1b8ba6');
+      sg.addColorStop(1, '#0d5670');
+      ctx.fillStyle = sg;
+      ctx.fillRect(0, seaTop, W, base - seaTop);
+      ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        for (let x = 0; x <= W; x += 12) {
+          const yy = seaTop + 8 + i * 11 + Math.sin(x * 0.03 + t * 1.4 + i) * 3;
+          if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+        }
+        ctx.stroke();
+      }
+      // barbatanas de tubarão
+      for (let i = 0; i < 3; i++) {
+        const fx = ((t * (22 + i * 9) + i * 260) % (W + 80)) - 40;
+        const fy = seaTop + 16 + i * 10;
+        ctx.fillStyle = 'rgba(20,40,55,0.85)';
+        ctx.beginPath();
+        ctx.moveTo(fx - 8, fy);
+        ctx.quadraticCurveTo(fx, fy - 13, fx + 7, fy);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(fx - 13, fy + 1);
+        ctx.lineTo(fx + 12, fy + 1);
+        ctx.stroke();
+      }
+      // gaivotas
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 4; i++) {
+        const gx = ((t * 16 + i * 190) % (W + 60)) - 30;
+        const gy = top + 10 + (i % 2) * 9;
+        const flap = Math.sin(t * 5 + i) * 3;
+        ctx.beginPath();
+        ctx.moveTo(gx - 7, gy);
+        ctx.quadraticCurveTo(gx, gy - 5 - flap, gx + 7, gy);
+        ctx.stroke();
+      }
+      // amurada do casco na frente
+      ctx.fillStyle = '#6b3f22';
+      ctx.fillRect(0, base - 14, W, 14);
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      for (let i = 0; i * 58 < W; i++) ctx.fillRect(i * 58 + 18, base - 12, 20, 8);
+      ctx.fillStyle = '#8a5a33';
+      ctx.fillRect(0, base - 16, W, 3);
+      break;
+    }
+  }
+  ctx.restore();
+  // sombra do cenário caindo sobre a cozinha
+  const sh = ctx.createLinearGradient(0, base - 10, 0, base + 8);
+  sh.addColorStop(0, 'rgba(0,0,0,0)');
+  sh.addColorStop(1, 'rgba(0,0,0,0.28)');
+  ctx.fillStyle = sh;
+  ctx.fillRect(0, base - 10, W, 18);
+}
+
+/** Miniatura do mapa para a tela de escolha. */
+const THUMB_MARK: Record<string, string> = {
+  T: '#e0463a', O: '#e9b949', L: '#64c24a', M: '#a1583a', B: '#d9a05b',
+  K: '#f3e4c8', S: '#3a3d44', F: '#3a3d44', W: '#f7b538', R: '#9b7fd4',
+  X: '#4b3a30', Z: '#79b6d9', D: '#c9d1d6', P: '#ffffff', E: '#d63b2f',
+};
+
+export function drawArenaThumb(ctx: CanvasRenderingContext2D, ar: ArenaDef, W: number, H: number) {
+  const h = ar.map.length;
+  const w = ar.map[0].length;
+  const s = Math.min(W / w, H / h);
+  const ox = (W - w * s) / 2;
+  const oy = (H - h * s) / 2;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = ar.sea ? '#0d4d62' : shade(ar.wall, -45);
+  ctx.fillRect(0, 0, W, H);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const c = ar.map[y][x] ?? ' ';
+      const px = ox + x * s;
+      const py = oy + y * s;
+      if (c === ' ') continue;
+      if (c === '.' || c === '1' || c === '2') ctx.fillStyle = ar.floor[(x + y) % 2];
+      else if (c === '~') ctx.fillStyle = shade(ar.floor[0], -40);
+      else ctx.fillStyle = ar.top;
+      ctx.fillRect(px, py, s, s);
+      const mark = THUMB_MARK[c];
+      if (mark) {
+        ctx.fillStyle = mark;
+        ctx.fillRect(px + s * 0.22, py + s * 0.22, s * 0.56, s * 0.56);
+      }
+      if (c === '1' || c === '2') {
+        ctx.fillStyle = c === '1' ? '#2f7de1' : '#ef5a3c';
+        ctx.beginPath();
+        ctx.arc(px + s / 2, py + s / 2, s * 0.32, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+}
+
 export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number) {
   const { W, H } = worldSize(gs);
   const lv = gs.level;
+  const ar = gs.arena;
+  // a fenda só é um perigo nas fases que a usam; nas outras é chão comum
+  const hasGap = !!gs.level.gap;
 
-  // fundo
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, shade(lv.wall, -30));
-  g.addColorStop(1, shade(lv.wall, -60));
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, H);
+  drawBackground(ctx, gs, W, H);
+  drawScene(ctx, gs, W);
 
   ctx.save();
   if (gs.shake > 0) ctx.translate((Math.random() - 0.5) * gs.shake * 10, (Math.random() - 0.5) * gs.shake * 10);
@@ -735,17 +1339,23 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
     for (const t of row) {
       const sx = OX + t.x * T;
       const sy = OY + t.y * T;
-      if (t.type === 'void' || (t.type === 'gap' && gs.gapPhase === 'open')) {
-        ctx.fillStyle = '#140c0a';
-        ctx.fillRect(sx, sy, T, T);
-        ctx.fillStyle = 'rgba(255,255,255,0.04)';
-        ctx.fillRect(sx, sy, T, 10);
+      const open = t.type === 'gap' && hasGap && gs.gapPhase === 'open';
+      if (t.type === 'void' || open) {
+        if (ar.sea && t.type === 'void') {
+          drawWater(ctx, gs.clock, sx, sy);
+        } else {
+          ctx.fillStyle = '#140c0a';
+          ctx.fillRect(sx, sy, T, T);
+          ctx.fillStyle = 'rgba(255,255,255,0.04)';
+          ctx.fillRect(sx, sy, T, 10);
+        }
         continue;
       }
-      ctx.fillStyle = lv.floor[(t.x + t.y) % 2];
+      ctx.fillStyle = ar.floor[(t.x + t.y) % 2];
       ctx.fillRect(sx, sy, T, T);
-      if (t.type === 'gap') {
-        ctx.strokeStyle = 'rgba(80,40,30,0.35)';
+      drawFloorPattern(ctx, ar, t.x, t.y, sx, sy);
+      if (t.type === 'gap' && hasGap) {
+        ctx.strokeStyle = 'rgba(80,40,30,0.45)';
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(sx + (t.x % 2 ? 0 : T), sy + 8);

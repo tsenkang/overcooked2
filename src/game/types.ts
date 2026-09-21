@@ -85,6 +85,9 @@ export interface Player {
   spawn: Pt;
   body: string;
   accent: string;
+  skin: string;
+  hat: HatId;
+  name: string;
   label: string;
   active: boolean; // modo solo: só um chef recebe comando
 }
@@ -153,24 +156,57 @@ export interface Recipe {
   steps: { f: FoodId; tool: 'knife' | 'pot' | 'pan' | 'none' }[];
 }
 
+/** Regras da fase. O layout e o visual vêm da arena escolhida no menu. */
 export interface LevelDef {
   id: number;
   name: string;
   subtitle: string;
-  map: string[];
   recipes: RecipeId[];
   duration: number;
   dirtyPlates: boolean;
   stars: [number, number, number];
   gap?: { closed: number; warn: number; open: number };
+}
+
+// ─── Arenas (mapa + tema visual) ────────────────────────────────────────────
+export type ArenaId = 'japan' | 'france' | 'brazil' | 'africa' | 'usa' | 'ship';
+export type ArenaPattern = 'tatami' | 'checker' | 'calcada' | 'mudcloth' | 'diner' | 'deck';
+
+/** Cozinha completa: serve para qualquer fase. */
+export interface ArenaDef {
+  id: ArenaId;
+  name: string;
+  region: string;
+  flag: string;
+  subtitle: string;
+  props: string[];
+  map: string[];
   floor: [string, string];
   wall: string;
+  top: string;
+  topLine: string;
+  pattern: ArenaPattern;
+  scene: ArenaId;
+  /** desenha o vazio como mar em vez de buraco escuro */
+  sea?: boolean;
+}
+
+// ─── Avatares ───────────────────────────────────────────────────────────────
+export type HatId = 'toque' | 'bandana' | 'cap' | 'beanie' | 'crown' | 'none';
+
+export interface Avatar {
+  name: string;
+  body: string;
+  accent: string;
+  skin: string;
+  hat: HatId;
 }
 
 export type GapPhase = 'closed' | 'warn' | 'open';
 
 export interface GameState {
   level: LevelDef;
+  arena: ArenaDef;
   w: number;
   h: number;
   tiles: Tile[][];
