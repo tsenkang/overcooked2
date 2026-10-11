@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { isMuted, setMuted } from './game/audio';
 import { createGame, starsFor, update } from './game/engine';
 import { Input } from './game/input';
+import { bindRumble } from './game/rumble';
 import { render, worldSize } from './game/render';
 import type { ArenaDef, Avatar, GameState, LevelDef } from './game/types';
 import { Controls } from './ui';
@@ -14,6 +15,8 @@ export interface Result {
   delivered: number;
   failed: number;
   tips: number;
+  /** tempo sobrevivido (só importa no modo sobrevivência) */
+  time: number;
 }
 
 interface Props {
@@ -33,6 +36,7 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
   const [paused, setPaused] = useState(false);
   const [muted, setMutedState] = useState(isMuted());
   const [runId, setRunId] = useState(0);
+  const [gpCount, setGpCount] = useState(0);
 
   const togglePause = (v?: boolean) => {
     const next = v ?? !pausedRef.current;
@@ -48,9 +52,11 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
     const ctx = canvas.getContext('2d')!;
     const input = new Input();
     input.attach();
+    bindRumble(input);
     let finished = false;
     let raf = 0;
     let last = performance.now();
+    let lastGpCount = -1;
 
     const { W, H } = worldSize(gs);
     const fit = () => {
@@ -73,6 +79,11 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
       last = now;
       if (input.consumePause() && !gs.over) togglePause();
       const pads = input.poll();
+      const gpc = input.gamepadCount();
+      if (gpc !== lastGpCount) {
+        lastGpCount = gpc;
+        setGpCount(gpc);
+      }
       if (!pausedRef.current) update(gs, dt, pads);
       render(ctx, gs, pausedRef.current ? 0 : dt);
       if (gs.over && gs.overT > 2 && !finished) {
@@ -85,6 +96,7 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
           delivered: gs.delivered,
           failed: gs.failed,
           tips: gs.tipsTotal,
+          time: gs.time,
         });
       }
       raf = requestAnimationFrame(loop);
@@ -96,6 +108,7 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
     return () => {
       cancelAnimationFrame(raf);
       input.detach();
+      bindRumble(null);
       ro.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -148,6 +161,11 @@ export default function GameCanvas({ level, arena, avatars, solo, onFinish, onQu
                 Som: {muted ? 'desligado' : 'ligado'}
               </button>
             </div>
+            <p className="mt-4 text-center text-sm text-[#6b5446]">
+              {gpCount === 0
+                ? 'Nenhum controle detectado — aperte um botão nele pra ativar.'
+                : `🎮 ${gpCount} ${gpCount === 1 ? 'controle conectado' : 'controles conectados'}`}
+            </p>
             <div className="mt-6">
               <Controls solo={solo} compact names={[avatars[0].name, avatars[1].name]} />
             </div>

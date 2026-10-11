@@ -26,6 +26,13 @@ npm run test        # testes de lógica (receitas, mapas, fase do ladrão)
 | Trocar de chef (modo 1 jogador) | Q ou Tab | — | LB / RB |
 | Pausa | Esc ou P | Esc ou P | Start |
 
+Os dois controles plugados são atribuídos pela ordem real de conexão, não pelo índice que o navegador dá a cada
+um (que pode não ser 0/1 — era um bug real: com um só controle plugado, às vezes ele simplesmente não respondia).
+O analógico tem zona morta com reescala suave, e o jogo vibra nos momentos importantes (entregar, nocautear o
+ladrão, cair num buraco, pegar fogo) quando o controle suporta. A tela de pausa mostra quantos controles estão
+detectados agora — se aparecer "nenhum controle detectado", aperte qualquer botão nele pra o navegador liberar o
+acesso (é assim que a Gamepad API funciona, não é bug do jogo).
+
 ## Personalizar os chefs
 
 No menu, cada chef tem um editor com prévia ao vivo (desenhada pelo mesmo código do jogo):
@@ -88,18 +95,38 @@ chão comum; na fase 3 ela abre e racha a cozinha em duas metades com estações
 
 ## Fases
 
-| # | Nome | Novidade | Estrelas |
+30 fases em 6 mundos de 5. Cada fase libera com 1 estrela na anterior e pode ser jogada em qualquer um dos 6
+mapas — o progresso (estrelas e recorde) é por fase, não por mapa, e fica salvo no navegador. No menu, os mundos
+ficam num acordeão (clique pra abrir); o que tiver a próxima fase não conquistada abre sozinho.
+
+| Mundo | Fases | Tema | O que entra de novo |
 |---|---|---|---|
-| 1 | Sopa na Serra | panela, fogo, extintor | 60 / 140 / 220 |
-| 2 | Lanchonete do Porto | frigideira, salada, pratos sujos e pia | 60 / 150 / 240 |
-| 3 | Cozinha Rachada | o chão do meio abre de tempos em tempos (quem cai renasce em 5 s) | 50 / 130 / 210 |
-| 4 | Fim de Semana Lotado | cardápio inteiro + pratos sujos + fenda, tudo junto | 70 / 170 / 270 |
-| 5 | Assalto na Cozinha | o ladrão (veja abaixo) | 70 / 160 / 250 |
+| 1 · Primeiros Pratos | 1–5 | fundamentos | panela/fogo/extintor, frigideira, pratos sujos, a fenda, o ladrão |
+| 2 · Correria | 6–10 | ritmo | pedidos chegam mais rápido (`rush`) |
+| 3 · Chão Instável | 11–15 | fenda | a fenda cada vez mais rápida e frequente |
+| 4 · Gelo na Cozinha | 16–20 | gelo | piso escorregadio (veja abaixo), cada vez maior |
+| 5 · Assaltos | 21–25 | ladrão | o ladrão visita mais vezes, com menos intervalo |
+| 6 · Mestre Cuca | 26–30 | combinações | duas mecânicas ao mesmo tempo — a 30 tem todas juntas |
 
-Cada fase libera com 1 estrela na anterior e pode ser jogada em qualquer um dos 6 mapas. O progresso (estrelas e
-recorde) é por fase, não por mapa, e fica salvo no navegador.
+## Piso de gelo (mundo 4+)
 
-## O ladrão (fase 5)
+Uma poça de gelo aparece no meio da cozinha — anda liso que nem patinação: o chef demora bem mais pra frear ou
+mudar de direção em cima dela (compare `accel` com `iceAccel` em `TUNING`, `src/game/types.ts`). Cresce a partir
+do tile mais central do salão, sempre longe dos dois pontos de partida, então nunca prende ninguém assim que a
+fase começa. Como a fenda e o ladrão, o gelo é calculado — não faz parte do mapa — e funciona em qualquer uma das
+6 arenas.
+
+## Outros modos
+
+Fora da campanha numerada, sem precisar de estrela pra destravar:
+
+- **Modo Livre** — duração de 1 hora, sem fenda nem ladrão, cardápio completo. Pra treinar ou só cozinhar sem
+  pressão; normalmente você sai pelo menu de pausa antes do tempo acabar.
+- **Sobrevivência** — sem cronômetro regressivo: o relógio conta o tempo que você aguentou, o ritmo dos pedidos
+  só aumenta (mesma régua da correria), e a partida acaba na hora que **3 pedidos** vencerem (❤️ na HUD mostram
+  quantos já foram perdidos). O recorde salvo é o maior tempo sobrevivido, não a pontuação.
+
+## O ladrão (fase 5, 21–25 e nos combos do mundo 6)
 
 Em momentos aleatórios da partida (a cada 22–42 s, no máximo 3 vezes), alguém abre uma porta nos fundos da
 cozinha. As luzes caem, sobra só uma luz em volta de cada chef — e do ladrão dá pra ver uma sombra fraca — e um
@@ -130,16 +157,23 @@ src/
     avatars.ts       paletas, chapéus e leitura segura do save
     engine.ts        lógica pura: movimento, interação, cozimento, fogo, pedidos
     render.ts        desenho em canvas (cenários, piso, ladrão, luz do assalto)
-    input.ts         teclado + Gamepad API
+    input.ts         teclado + Gamepad API (zona morta, atribuição de controles)
+    rumble.ts        vibração do controle em eventos marcantes
     audio.ts         sons sintetizados (sem arquivos)
 scripts/
   validate-maps.mjs  confere as 6 arenas (largura, estações, alcançabilidade, fenda)
-  smoke-heist.ts     testa a fase do ladrão e as receitas novas sem navegador
+  smoke-heist.ts     testa a fase do ladrão, receitas e que toda receita esteja em alguma fase
   smoke-arenas.ts    confere porta/taco calculados em cada arena × cada fase
+  smoke-input.ts     testa a leitura de controle (inclui o bug de índice corrigido)
+  smoke-ice.ts       testa geração do gelo, física de escorregar e o ritmo (`rush`)
+  smoke-modes.ts     testa Modo Livre e Sobrevivência (relógio, strikes, ritmo)
 docs/ARQUITETURA.md  decisões técnicas
 ```
 
-**Fase nova:** adicione um item em `LEVELS` (`src/game/content.ts`) — só regras, sem mapa.
+**Fase nova:** adicione um item em `LEVELS` (`src/game/content.ts`) — só regras, sem mapa. Além de `gap`/`heist`,
+dá pra ligar `ice: <quantos tiles>` (piso escorregadio) e `rush: <multiplicador>` (ritmo dos pedidos — 1 é o
+padrão, >1 mais rápido). Lembre de agrupar a fase em algum item de `WORLDS` e rodar `npm run test`, que barra
+receita sem fase nenhuma e confere porta/taco/gelo em todas as 6 arenas.
 
 **Receita nova:** adicione um item em `RECIPES` (`src/game/content.ts`) com as `parts` (tokens tipo
 `tomato:chopped`) e os `steps` pro ticket. Se usar um ingrediente ainda sem desenho no prato, complete

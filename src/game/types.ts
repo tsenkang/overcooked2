@@ -71,6 +71,8 @@ export interface Tile {
   washP: number; // 0..1
   /** fogão que o ladrão roubou — fica sem panela pelo resto da partida */
   stolen?: boolean;
+  /** piso escorregadio — o chef desliza em vez de frear na hora */
+  ice?: boolean;
 }
 
 export interface Player {
@@ -188,6 +190,12 @@ export interface LevelDef {
   stars: [number, number, number];
   gap?: { closed: number; warn: number; open: number };
   heist?: HeistDef;
+  /** quantos tiles de piso de gelo (em volta do centro da cozinha) — sem isso, não tem gelo */
+  ice?: number;
+  /** multiplicador de ritmo dos pedidos: >1 = mais rápido, <1 = mais calmo. Padrão 1. */
+  rush?: number;
+  /** modo sobrevivência: sem cronômetro regressivo — acaba depois de N pedidos perdidos */
+  endless?: { maxStrikes: number };
 }
 
 // ─── Arenas (mapa + tema visual) ────────────────────────────────────────────
@@ -281,12 +289,15 @@ export interface GameState {
   doorTile: Pt | null;
   heistTimer: number; // segundos até a próxima visita
   heistCount: number; // quantas panelas ele já levou
+  // modo sobrevivência
+  strikes: number; // pedidos perdidos nessa partida
 }
 
 // ─── Tempos e ajustes (tokens de gameplay) ──────────────────────────────────
 export const TUNING = {
   speed: 4.6, // tiles/s
   accel: 40,
+  iceAccel: 5.5, // bem mais lento que o normal — é o que faz o chef escorregar
   dashSpeed: 13,
   dashTime: 0.16,
   dashCooldown: 0.45,

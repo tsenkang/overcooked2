@@ -1038,8 +1038,9 @@ function drawBottomHud(ctx: CanvasRenderingContext2D, gs: GameState, W: number, 
   // nome da fase
   text(ctx, gs.level.name, W / 2, y + 2, 18, 'rgba(255,255,255,0.85)', { weight: 800 });
 
-  // relógio
-  const low = gs.time < 30;
+  // relógio — no modo sobrevivência o tempo conta pra cima (tempo sobrevivido),
+  // então o aviso vermelho de "acabando" não faz sentido aqui
+  const low = !gs.level.endless && gs.time < 30;
   const pulse = low ? 1 + Math.max(0, Math.sin(gs.clock * 8)) * 0.08 : 1;
   ctx.save();
   ctx.translate(W - 100, y);
@@ -1060,6 +1061,16 @@ function drawBottomHud(ctx: CanvasRenderingContext2D, gs: GameState, W: number, 
   const s = Math.ceil(gs.time) % 60;
   text(ctx, `${m}:${String(s).padStart(2, '0')}`, 12, 2, 30, '#ffffff', { weight: 900 });
   ctx.restore();
+
+  // vidas da sobrevivência — um coração por tentativa, apagado quando usado
+  if (gs.level.endless) {
+    const max = gs.level.endless.maxStrikes;
+    const cx0 = W - 100 - (max * 26) / 2 + 13;
+    for (let i = 0; i < max; i++) {
+      const used = i < gs.strikes;
+      emoji(ctx, used ? '🖤' : '❤️', cx0 + i * 26, y - 40, 20);
+    }
+  }
 }
 
 // ─── Cena completa ──────────────────────────────────────────────────────────
@@ -1170,6 +1181,40 @@ function drawFloorPattern(ctx: CanvasRenderingContext2D, ar: ArenaDef, x: number
       break;
     }
   }
+}
+
+/** Poça de gelo — por cima de qualquer tema, então funciona em qualquer arena. */
+function drawIce(ctx: CanvasRenderingContext2D, clock: number, x: number, y: number, sx: number, sy: number) {
+  const g = ctx.createLinearGradient(sx, sy, sx + T, sy + T);
+  g.addColorStop(0, 'rgba(190,230,245,0.55)');
+  g.addColorStop(0.5, 'rgba(220,245,252,0.38)');
+  g.addColorStop(1, 'rgba(190,230,245,0.55)');
+  ctx.fillStyle = g;
+  ctx.fillRect(sx, sy, T, T);
+
+  // rachaduras — formato fixo por tile (hash), não mudam quadro a quadro
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 1.4;
+  ctx.beginPath();
+  const h1 = hash2(x, y);
+  const h2 = hash2(x + 11, y + 7);
+  ctx.moveTo(sx + 6 + h1 * 18, sy + 10);
+  ctx.lineTo(sx + 20 + h2 * 10, sy + T / 2);
+  ctx.lineTo(sx + 10 + h1 * 14, sy + T - 8);
+  ctx.moveTo(sx + T - 10, sy + 14 + h2 * 10);
+  ctx.lineTo(sx + T / 2 + 4, sy + T / 2 + h1 * 6);
+  ctx.stroke();
+
+  // brilho que pisca devagar, dá a dica de "isso é liso"
+  const tw = (Math.sin(clock * 1.6 + x * 2.1 + y * 1.3) + 1) / 2;
+  ctx.fillStyle = `rgba(255,255,255,${0.1 + tw * 0.22})`;
+  ctx.beginPath();
+  ctx.ellipse(sx + 16 + h1 * 20, sy + 16 + h2 * 20, 7, 4, 0.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(140,200,225,0.6)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(sx + 1, sy + 1, T - 2, T - 2);
 }
 
 /** Água: usada nos tiles vazios do galeão. */
@@ -1575,6 +1620,7 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
       ctx.fillStyle = ar.floor[(t.x + t.y) % 2];
       ctx.fillRect(sx, sy, T, T);
       drawFloorPattern(ctx, ar, t.x, t.y, sx, sy);
+      if (t.ice) drawIce(ctx, gs.clock, t.x, t.y, sx, sy);
       if (t.type === 'gap' && hasGap) {
         ctx.strokeStyle = 'rgba(80,40,30,0.45)';
         ctx.lineWidth = 2;
@@ -1694,7 +1740,13 @@ export function render(ctx: CanvasRenderingContext2D, gs: GameState, dt: number)
     ctx.save();
     ctx.translate(W / 2, H / 2);
     ctx.scale(sc, sc);
-    text(ctx, 'Acabou o tempo!', 0, 0, 80, '#ffffff', { stroke: '#2b1d16', weight: 900 });
+    const over = gs.level.endless ? 'Fim de jogo!' : 'Acabou o tempo!';
+    text(ctx, over, 0, 0, 80, '#ffffff', { stroke: '#2b1d16', weight: 900 });
+    if (gs.level.endless) {
+      const m = Math.floor(gs.time / 60);
+      const s = Math.floor(gs.time) % 60;
+      text(ctx, `Sobreviveu ${m}:${String(s).padStart(2, '0')}`, 0, 64, 26, '#fff4dc', { stroke: '#2b1d16' });
+    }
     ctx.restore();
   }
 }

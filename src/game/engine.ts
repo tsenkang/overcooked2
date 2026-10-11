@@ -1,6 +1,7 @@
 import { sfx } from './audio';
 import { CHOPPABLE, RECIPES, canAddPart, matchRecipe } from './content';
 import type { PadState } from './input';
+import { rumble } from './rumble';
 import { DEFAULT_AVATARS, avatarLabel } from './avatars';
 import type {
   ArenaDef,
@@ -82,6 +83,10 @@ export function createGame(
   if (level.heist) placeBat(tiles, w, h, s1, s2);
   const doorTile = level.heist ? pickDoorTile(tiles, w, h, s1, s2) : null;
 
+  // piso de gelo: mesma lógica — calculado, não faz parte do mapa, então
+  // funciona em qualquer arena também.
+  if (level.ice) markIcePatch(tiles, w, h, s1, s2, level.ice);
+
   return {
     level,
     arena,
@@ -101,7 +106,8 @@ export function createGame(
     failed: 0,
     tipsTotal: 0,
     combo: 0,
-    time: level.duration,
+    // sobrevivência: `time` conta pra cima (tempo sobrevivido), não pra baixo
+    time: level.endless ? 0 : level.duration,
     orderTimer: 0,
     orderId: 0,
     countdown: 4.6,
@@ -116,6 +122,7 @@ export function createGame(
     doorTile,
     heistTimer: level.heist ? randRange(level.heist.minGap, level.heist.maxGap) : Infinity,
     heistCount: 0,
+    strikes: 0,
   };
 }
 
@@ -168,6 +175,53 @@ function placeBat(tiles: Tile[][], w: number, h: number, s1: Pt, s2: Pt) {
     }
   }
   if (best) best.item = { k: 'bat', home: { x: best.x, y: best.y } };
+}
+
+/**
+ * Marca uma poça de gelo em volta do centro da cozinha: só em tiles de chão
+ * livre (sem bancada, sem fenda), nunca encostando nos dois pontos de spawn
+ * (senão o chef já escorrega antes de dar o primeiro passo). Cresce por
+ * flood-fill a partir do tile mais central, então o formato se adapta à
+ * planta de cada arena em vez de ser sempre um quadrado.
+ */
+function markIcePatch(tiles: Tile[][], w: number, h: number, s1: Pt, s2: Pt, count: number) {
+  const cx = w / 2;
+  const cy = h / 2;
+  let seed: Tile | null = null;
+  let bd = Infinity;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const t = tiles[y][x];
+      if (t.type !== 'floor') continue;
+      const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+      if (d < bd) {
+        bd = d;
+        seed = t;
+      }
+    }
+  }
+  if (!seed) return;
+  const tooCloseToSpawn = (t: Tile) =>
+    Math.hypot(t.x + 0.5 - s1.x, t.y + 0.5 - s1.y) < 1.6 || Math.hypot(t.x + 0.5 - s2.x, t.y + 0.5 - s2.y) < 1.6;
+
+  const picked: Tile[] = [];
+  const seen = new Set<string>([`${seed.x},${seed.y}`]);
+  const queue: Tile[] = [seed];
+  while (queue.length && picked.length < count) {
+    // sempre pega o mais próximo do centro primeiro, pra crescer de forma arredondada
+    queue.sort((a, b) => Math.hypot(a.x + 0.5 - cx, a.y + 0.5 - cy) - Math.hypot(b.x + 0.5 - cx, b.y + 0.5 - cy));
+    const t = queue.shift()!;
+    if (!tooCloseToSpawn(t)) picked.push(t);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = t.x + dx;
+      const ny = t.y + dy;
+      const key = `${nx},${ny}`;
+      if (ny < 0 || ny >= h || nx < 0 || nx >= w || seen.has(key)) continue;
+      seen.add(key);
+      if (tiles[ny][nx].type === 'floor') queue.push(tiles[ny][nx]);
+    }
+  }
+  for (const t of picked) t.ice = true;
 }
 
 function vessel(k: 'pot' | 'pan', x: number, y: number): VesselItem {
@@ -281,14 +335,19 @@ export function update(gs: GameState, dt: number, pads: [PadState, PadState]) {
     return;
   }
 
-  // tempo
-  gs.time -= dt;
-  if (gs.time <= 0) {
-    gs.time = 0;
-    gs.over = true;
-    for (const p of gs.players) p.working = null;
-    sfx.end();
-    return;
+  // tempo: no modo sobrevivência conta pra cima (o fim vem dos "strikes",
+  // tratado em updateOrders), nas fases normais conta regressivo até zero
+  if (gs.level.endless) {
+    gs.time += dt;
+  } else {
+    gs.time -= dt;
+    if (gs.time <= 0) {
+      gs.time = 0;
+      gs.over = true;
+      for (const p of gs.players) p.working = null;
+      sfx.end();
+      return;
+    }
   }
 
   // controles → jogadores
@@ -390,7 +449,8 @@ function updatePlayer(gs: GameState, p: Player, pad: PadState, dt: number) {
     tvx = p.dirX * K.dashSpeed;
     tvy = p.dirY * K.dashSpeed;
   }
-  const a = Math.min(1, K.accel * dt);
+  const onIce = !!tileAt(gs, p.x, p.y)?.ice;
+  const a = Math.min(1, (onIce ? K.iceAccel : K.accel) * dt);
   p.vx += (tvx - p.vx) * (p.dashT > 0 ? 1 : a);
   p.vy += (tvy - p.vy) * (p.dashT > 0 ? 1 : a);
 
@@ -451,6 +511,7 @@ function killPlayer(gs: GameState, p: Player) {
   p.dead = K.respawn;
   p.working = null;
   sfx.fall();
+  rumble((p.id - 1) as 0 | 1, 0.7, 220);
   if (p.held) {
     loseItem(gs, p.held);
     p.held = null;
@@ -908,6 +969,8 @@ function ignite(gs: GameState, t: Tile) {
   t.fireSpread = 0;
   sfx.fire();
   gs.shake = 0.5;
+  rumble(0, 0.5, 160);
+  rumble(1, 0.5, 160);
   if (t.item?.k === 'food') t.item.s = 'burnt';
   for (const p of gs.players) if (p.working === t) p.working = null;
 }
@@ -1167,6 +1230,7 @@ function swingBat(gs: GameState, p: Player) {
     sfx.reject();
     return;
   }
+  rumble((p.id - 1) as 0 | 1, 0.9, 180);
   stunThief(gs, th);
 }
 
@@ -1231,14 +1295,19 @@ function spawnOrder(gs: GameState) {
 }
 
 function updateOrders(gs: GameState, dt: number) {
-  const elapsed = gs.level.duration - gs.time;
-  const interval = Math.max(11, 20 - elapsed / 25);
+  const rush = gs.level.rush ?? 1;
+  // sobrevivência: `time` já É o tempo decorrido (conta pra cima); nas fases
+  // normais ele conta regressivo, então o decorrido é duração menos o que sobra.
+  const elapsed = gs.level.endless ? gs.time : gs.level.duration - gs.time;
+  // com rush=1 isso é exatamente Math.max(11, 20 - elapsed/25) de sempre —
+  // rush só entra em cena quando a fase pede um ritmo diferente do padrão.
+  const interval = Math.max(11 / rush, (20 - elapsed / 25) / rush);
   gs.orderTimer -= dt;
   const active = gs.orders.filter((o) => o.failT <= 0 && o.okT <= 0);
   if (active.length === 0 && gs.orderTimer > 1.5) gs.orderTimer = 1.5;
   if (gs.orderTimer <= 0) {
     spawnOrder(gs);
-    gs.orderTimer = active.length < 2 ? 4 : interval;
+    gs.orderTimer = active.length < 2 ? 4 / rush : interval;
   }
 
   for (let i = gs.orders.length - 1; i >= 0; i--) {
@@ -1262,6 +1331,14 @@ function updateOrders(gs: GameState, dt: number) {
       gs.score = Math.max(0, gs.score - K.orderFailPenalty);
       gs.shake = 0.6;
       sfx.fail();
+      if (gs.level.endless) {
+        gs.strikes++;
+        if (gs.strikes >= gs.level.endless.maxStrikes) {
+          gs.over = true;
+          for (const p of gs.players) p.working = null;
+          sfx.end();
+        }
+      }
     }
   }
 }
@@ -1287,6 +1364,7 @@ function deliver(gs: GameState, p: Player, t: Tile, plate: PlateItem) {
   p.held = null;
   gs.pendingPlates.push(K.plateReturn);
   sfx.deliver();
+  rumble((p.id - 1) as 0 | 1, 0.35, 90);
   if (tip >= 8) sfx.tip();
   addFloat(gs, t.x + 0.5, t.y - 0.2, `+${value}`, '#ffffff', true);
   addFloat(gs, t.x + 0.5, t.y + 0.4, `gorjeta +${tip}${gs.combo > 1 ? `  x${gs.combo}` : ''}`, '#ffd23f');

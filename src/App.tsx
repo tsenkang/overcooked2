@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import GameCanvas, { type Result } from './GameCanvas';
 import { sfx } from './game/audio';
 import { ACCENT_COLORS, BODY_COLORS, DEFAULT_AVATARS, HATS, SKIN_TONES, sanitizeAvatar } from './game/avatars';
-import { LEVELS, RECIPES } from './game/content';
+import { LEVELS, RECIPES, SURVIVAL_LEVEL, WORLDS, ZEN_LEVEL, worldOf } from './game/content';
 import { ARENAS } from './game/maps';
 import type { ArenaDef, Avatar, LevelDef } from './game/types';
 import { ArenaThumb, AvatarCanvas, Controls, Stars, Swatches } from './ui';
@@ -60,6 +60,11 @@ export default function App() {
   const [progress, setProgress] = useState<Progress>(loadProgress);
   const [avatars, setAvatars] = useState<Pair>(loadAvatars);
   const [lastArena, setLastArena] = useState<ArenaDef>(loadArena);
+  const [openWorld, setOpenWorld] = useState<number>(() => {
+    const p = loadProgress();
+    const frontier = LEVELS.find((lv) => (p[lv.id]?.stars ?? 0) < 1) ?? LEVELS[LEVELS.length - 1];
+    return worldOf(frontier.id);
+  });
 
   const setAvatar = (i: 0 | 1, patch: Partial<Avatar>) => {
     const next: Pair = i === 0 ? [{ ...avatars[0], ...patch }, avatars[1]] : [avatars[0], { ...avatars[1], ...patch }];
@@ -75,9 +80,11 @@ export default function App() {
 
   const finish = (r: Result) => {
     const prev = progress[r.level.id];
+    // na sobrevivência o "recorde" é tempo sobrevivido, não pontuação
+    const bestValue = r.level.endless ? r.time : r.score;
     const next: Progress = {
       ...progress,
-      [r.level.id]: { stars: Math.max(prev?.stars ?? 0, r.stars), best: Math.max(prev?.best ?? 0, r.score) },
+      [r.level.id]: { stars: Math.max(prev?.stars ?? 0, r.stars), best: Math.max(prev?.best ?? 0, bestValue) },
     };
     setProgress(next);
     save(SAVE_KEY, next);
@@ -175,38 +182,117 @@ export default function App() {
           </div>
         </section>
 
-        <section className="mt-10 grid gap-4 md:grid-cols-3" aria-label="Fases">
-          {LEVELS.map((lv, i) => {
-            const locked = i > 0 && (progress[LEVELS[i - 1].id]?.stars ?? 0) < 1;
-            const pr = progress[lv.id];
-            return (
-              <article
-                key={lv.id}
-                className={`relative rounded-3xl bg-[#fffaf0] p-5 shadow-[0_8px_0_rgba(0,0,0,0.25)] flex flex-col ${
-                  locked ? 'opacity-60' : ''
-                }`}
-              >
-                <div className="h-2 rounded-full mb-4 bg-[#c2703f]" />
-                <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">Fase {lv.id}</p>
-                <h2 className="font-display text-2xl font-black leading-tight">{lv.name}</h2>
-                <p className="mt-1 text-sm text-[#6b5446] flex-1">{lv.subtitle}</p>
-                <p className="mt-3 text-xs text-[#6b5446]">
-                  <b>Pratos:</b> {lv.recipes.map((r) => RECIPES[r].name).join(', ')}
-                </p>
-                <div className="mt-3 flex items-center justify-between">
-                  <Stars n={pr?.stars ?? 0} size="text-2xl" />
-                  <span className="text-xs text-[#8a6f5e]">{pr ? `recorde ${pr.best}` : `${lv.stars.join(' / ')} pts`}</span>
+        <section className="mt-10" aria-label="Fases">
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <h2 className="font-display text-3xl font-black text-[#fff4dc]">Campanha</h2>
+            <p className="text-sm text-[#fff4dc]/80">30 fases em 6 mundos — clique num mundo pra abrir.</p>
+          </div>
+          <div className="mt-4 grid gap-3">
+            {WORLDS.map((world, wi) => {
+              const levels = LEVELS.filter((lv) => lv.id >= world.from && lv.id <= world.to);
+              const worldStars = levels.reduce((s, lv) => s + (progress[lv.id]?.stars ?? 0), 0);
+              const worldMax = levels.length * 3;
+              const open = openWorld === wi;
+              const prevWorldDone = world.from === 1 || (progress[world.from - 1]?.stars ?? 0) >= 1;
+              return (
+                <div key={world.name} className="rounded-3xl bg-[#fffaf0] overflow-hidden shadow-[0_8px_0_rgba(0,0,0,0.25)]">
+                  <button
+                    onClick={() => setOpenWorld(open ? -1 : wi)}
+                    aria-expanded={open}
+                    className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-[#2b1d16]/5"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">
+                        Mundo {wi + 1} · fases {world.from}–{world.to}
+                      </p>
+                      <h3 className="font-display text-xl font-black leading-tight truncate">{world.name}</h3>
+                      <p className="text-sm text-[#6b5446] truncate">{world.tagline}</p>
+                    </div>
+                    <div className="shrink-0 flex items-center gap-3">
+                      <span className="text-sm font-bold text-[#8a6f5e]">★ {worldStars}/{worldMax}</span>
+                      <span className={`text-2xl transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true">
+                        ⌄
+                      </span>
+                    </div>
+                  </button>
+                  {open && (
+                    <div className="grid gap-4 p-5 pt-0 sm:grid-cols-2 lg:grid-cols-3">
+                      {!prevWorldDone && (
+                        <p className="sm:col-span-2 lg:col-span-3 text-sm text-[#8a6f5e] -mt-1">
+                          Ganhe 1 estrela no mundo anterior pra destravar essas fases.
+                        </p>
+                      )}
+                      {levels.map((lv) => {
+                        const i = LEVELS.findIndex((l) => l.id === lv.id);
+                        const locked = i > 0 && (progress[LEVELS[i - 1].id]?.stars ?? 0) < 1;
+                        const pr = progress[lv.id];
+                        return (
+                          <article
+                            key={lv.id}
+                            className={`relative rounded-2xl bg-white p-5 shadow-[0_6px_0_rgba(0,0,0,0.15)] flex flex-col ${
+                              locked ? 'opacity-60' : ''
+                            }`}
+                          >
+                            <div className="h-2 rounded-full mb-4 bg-[#c2703f]" />
+                            <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">Fase {lv.id}</p>
+                            <h2 className="font-display text-2xl font-black leading-tight">{lv.name}</h2>
+                            <p className="mt-1 text-sm text-[#6b5446] flex-1">{lv.subtitle}</p>
+                            <p className="mt-3 text-xs text-[#6b5446]">
+                              <b>Pratos:</b> {lv.recipes.map((r) => RECIPES[r].name).join(', ')}
+                            </p>
+                            <div className="mt-3 flex items-center justify-between">
+                              <Stars n={pr?.stars ?? 0} size="text-2xl" />
+                              <span className="text-xs text-[#8a6f5e]">
+                                {pr ? `recorde ${pr.best}` : `${lv.stars.join(' / ')} pts`}
+                              </span>
+                            </div>
+                            <button
+                              disabled={locked}
+                              onClick={() => setScreen({ name: 'pick', level: lv })}
+                              className="btn-primary mt-4 disabled:cursor-not-allowed"
+                            >
+                              {locked ? 'Ganhe 1 estrela na anterior' : 'Escolher mapa'}
+                            </button>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-                <button
-                  disabled={locked}
-                  onClick={() => setScreen({ name: 'pick', level: lv })}
-                  className="btn-primary mt-4 disabled:cursor-not-allowed"
-                >
-                  {locked ? 'Ganhe 1 estrela na anterior' : 'Escolher mapa'}
-                </button>
-              </article>
-            );
-          })}
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="mt-10" aria-label="Outros modos">
+          <h2 className="font-display text-3xl font-black text-[#fff4dc] text-center">Outros modos</h2>
+          <p className="text-center text-sm text-[#fff4dc]/80 mt-1">Fora da campanha — não precisam de estrela pra destravar.</p>
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <article className="rounded-3xl bg-[#fffaf0] p-5 shadow-[0_8px_0_rgba(0,0,0,0.25)] flex flex-col">
+              <div className="h-2 rounded-full mb-4 bg-[#3ec46d]" />
+              <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">Sem pressão</p>
+              <h3 className="font-display text-2xl font-black leading-tight">{ZEN_LEVEL.name}</h3>
+              <p className="mt-1 text-sm text-[#6b5446] flex-1">{ZEN_LEVEL.subtitle}</p>
+              <button onClick={() => setScreen({ name: 'pick', level: ZEN_LEVEL })} className="btn-primary mt-4">
+                Jogar modo livre
+              </button>
+            </article>
+            <article className="rounded-3xl bg-[#fffaf0] p-5 shadow-[0_8px_0_rgba(0,0,0,0.25)] flex flex-col">
+              <div className="h-2 rounded-full mb-4 bg-[#ef4444]" />
+              <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">
+                {progress[SURVIVAL_LEVEL.id]?.best
+                  ? `recorde ${Math.floor((progress[SURVIVAL_LEVEL.id]?.best ?? 0) / 60)}:${String(
+                      Math.floor(progress[SURVIVAL_LEVEL.id]?.best ?? 0) % 60,
+                    ).padStart(2, '0')}`
+                  : 'até quanto você aguenta?'}
+              </p>
+              <h3 className="font-display text-2xl font-black leading-tight">{SURVIVAL_LEVEL.name}</h3>
+              <p className="mt-1 text-sm text-[#6b5446] flex-1">{SURVIVAL_LEVEL.subtitle}</p>
+              <button onClick={() => setScreen({ name: 'pick', level: SURVIVAL_LEVEL })} className="btn-primary mt-4">
+                Jogar sobrevivência
+              </button>
+            </article>
+          </div>
         </section>
 
         <section className="mt-10 grid gap-4 md:grid-cols-2">
@@ -298,7 +384,8 @@ function MapPicker({
       <div className="mx-auto max-w-5xl px-4 py-8">
         <header className="text-center">
           <p className="font-display text-sm font-extrabold tracking-[0.3em] text-[#fff4dc]/80 uppercase">
-            Fase {level.id} · {level.name}
+            {level.id >= 1 && level.id <= 30 ? `Fase ${level.id} · ` : ''}
+            {level.name}
           </p>
           <h1 className="font-display title-3d mt-2 text-5xl sm:text-6xl font-black leading-none">ESCOLHA A COZINHA</h1>
           <p className="mt-3 text-[#fff4dc]/90 max-w-2xl mx-auto">
@@ -358,9 +445,12 @@ function ResultScreen({
   r: Result; best: number; onRetry: () => void; onChangeMap: () => void; onNext: () => void; onMenu: () => void;
 }) {
   const [lit, setLit] = useState(0);
-  const canNext = LEVELS.some((l) => l.id === r.level.id + 1) && r.stars > 0;
+  const isCampaign = r.level.id >= 1 && r.level.id <= 30;
+  const isSurvival = !!r.level.endless;
+  const canNext = isCampaign && LEVELS.some((l) => l.id === r.level.id + 1) && r.stars > 0;
 
   useEffect(() => {
+    if (!isCampaign) return;
     const timers = [0, 1, 2].map((i) =>
       window.setTimeout(() => {
         if (i < r.stars) sfx.star();
@@ -368,22 +458,37 @@ function ResultScreen({
       }, 500 + i * 450),
     );
     return () => timers.forEach(clearTimeout);
-  }, [r.stars]);
+  }, [r.stars, isCampaign]);
+
+  const survivedTime = `${Math.floor(r.time / 60)}:${String(Math.floor(r.time) % 60).padStart(2, '0')}`;
 
   return (
     <main className="min-h-screen tile-bg flex items-center justify-center p-4 text-[#2b1d16]">
       <div className="w-full max-w-md rounded-3xl bg-[#fffaf0] p-8 text-center shadow-[0_10px_0_rgba(0,0,0,0.25)]">
         <p className="text-xs font-extrabold uppercase tracking-widest text-[#8a6f5e]">
-          Fase {r.level.id} · {r.arena.flag} {r.arena.name}
+          {isCampaign ? `Fase ${r.level.id} · ` : ''}
+          {r.arena.flag} {r.arena.name}
         </p>
         <h1 className="font-display text-4xl font-black">{r.level.name}</h1>
-        <div className="mt-4 flex justify-center">
-          <Stars n={r.stars} lit={lit} size="text-6xl" />
-        </div>
+        {isCampaign ? (
+          <div className="mt-4 flex justify-center">
+            <Stars n={r.stars} lit={lit} size="text-6xl" />
+          </div>
+        ) : isSurvival ? (
+          <p className="font-display title-3d mt-4 text-5xl font-black">{survivedTime}</p>
+        ) : null}
         <p className="font-display mt-2 text-6xl font-black tabular-nums">{r.score}</p>
-        <p className="text-sm text-[#6b5446]">
-          {r.stars === 0 ? `Faltaram ${r.level.stars[0] - r.score} pontos para a 1ª estrela` : `Recorde: ${best}`}
-        </p>
+        {isCampaign ? (
+          <p className="text-sm text-[#6b5446]">
+            {r.stars === 0 ? `Faltaram ${r.level.stars[0] - r.score} pontos para a 1ª estrela` : `Recorde: ${best}`}
+          </p>
+        ) : (
+          <p className="text-sm text-[#6b5446]">
+            {isSurvival
+              ? `Recorde: ${Math.floor(best / 60)}:${String(Math.floor(best) % 60).padStart(2, '0')}`
+              : `Recorde: ${best}`}
+          </p>
+        )}
         <dl className="mt-6 grid grid-cols-3 gap-2 text-sm">
           <div className="rounded-2xl bg-[#2b1d16]/5 p-3">
             <dt className="text-[#6b5446]">Entregues</dt>
@@ -398,7 +503,7 @@ function ResultScreen({
             <dd className="font-display text-2xl font-black">{r.tips}</dd>
           </div>
         </dl>
-        <p className="mt-4 text-xs text-[#8a6f5e]">Estrelas em {r.level.stars.join(' · ')} pontos</p>
+        {isCampaign && <p className="mt-4 text-xs text-[#8a6f5e]">Estrelas em {r.level.stars.join(' · ')} pontos</p>}
         <div className="mt-6 grid gap-3">
           {canNext && (
             <button className="btn-primary" onClick={onNext}>

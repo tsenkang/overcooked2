@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "validate:maps": "node scripts/validate-maps.mjs",
-    "test": "tsx scripts/smoke-heist.ts && tsx scripts/smoke-arenas.ts"
+    "test": "tsx scripts/smoke-heist.ts && tsx scripts/smoke-arenas.ts && tsx scripts/smoke-input.ts && tsx scripts/smoke-ice.ts && tsx scripts/smoke-modes.ts"
   },
   "dependencies": {
     "react": "^18.2.0",

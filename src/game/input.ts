@@ -35,10 +35,36 @@ export const KEYMAP = {
 
 const GAME_CODES = new Set(Object.values(KEYMAP).flatMap((m) => Object.values(m).flat()));
 
+// ─── Analógico ──────────────────────────────────────────────────────────────
+const STICK_DEADZONE = 0.22;
+
+/**
+ * Zona morta com reescala suave: em vez de cortar tudo abaixo do limite (o que
+ * faz o chef pular de parado pra velocidade máxima no instante em que passa do
+ * limite), reaproveita o trecho 0..limite pra uma rampa de 0 a 1. Fica macio
+ * tanto puxando de leve quanto no fundo do curso.
+ */
+function applyDeadzone(x: number, y: number, dz: number): [number, number] {
+  const mag = Math.hypot(x, y);
+  if (mag < dz) return [0, 0];
+  const scaled = Math.min(1, (mag - dz) / (1 - dz)) / mag;
+  return [x * scaled, y * scaled];
+}
+
+/** Um controle "padrão" do Gamepad API: botões e eixos nas posições de sempre. */
+export interface GamepadSlot {
+  /** índice bruto que o navegador deu a esse controle (pode não ser 0/1) */
+  rawIndex: number;
+  id: string;
+}
+
 export class Input {
   private down = new Set<string>();
   private pressed = new Set<string>();
-  private prevPad: boolean[][] = [[], [], [], []];
+  /** estado anterior dos botões, por índice BRUTO do navegador — não por slot
+   * lógico de jogador, porque esse índice é estável mesmo se a ordem dos
+   * controles conectados mudar de um quadro pro outro. */
+  private prevButtons = new Map<number, boolean[]>();
   pausePressed = false;
 
   private onDown = (e: KeyboardEvent) => {
@@ -83,33 +109,53 @@ export class Input {
     };
   }
 
-  private gamepad(i: number): PadState | null {
-    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = pads[i];
-    if (!gp) return null;
+  /**
+   * Controles de verdade conectados agora, em ordem estável (pelo índice que
+   * o navegador deu, que é o que existe desde a primeira vez que o controle
+   * mandou um botão — plugar um 2º controle nunca reordena o 1º).
+   *
+   * O bug que isso corrige: a versão antiga lia getGamepads()[0] pro jogador 1
+   * e [1] pro jogador 2. Só que esse índice é a POSIÇÃO NA LISTA do navegador,
+   * não "o primeiro controle plugado" — se só um controle está ligado e ele
+   * calhou de ocupar o slot 1 (comum depois de desconectar e reconectar, ou
+   * com controle via Bluetooth), o jogador 1 ficava sem resposta nenhuma.
+   */
+  private connectedPads(): (Gamepad | null)[] {
+    const raw = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    const found: Gamepad[] = [];
+    for (const gp of raw) if (gp) found.push(gp);
+    found.sort((a, b) => a.index - b.index);
+    return found;
+  }
+
+  /** Pra UI: quantos controles estão plugados e respondendo agora. */
+  gamepadCount(): number {
+    return this.connectedPads().length;
+  }
+
+  private readPad(gp: Gamepad): PadState {
     const b = gp.buttons.map((x) => x.pressed);
-    const prev = this.prevPad[i];
+    const prev = this.prevButtons.get(gp.index) ?? [];
     const edge = (k: number) => !!b[k] && !prev[k];
-    this.prevPad[i] = b;
+    this.prevButtons.set(gp.index, b);
     if (edge(9)) this.pausePressed = true;
+
     let mx = gp.axes[0] ?? 0;
     let my = gp.axes[1] ?? 0;
-    if (Math.hypot(mx, my) < 0.25) {
-      mx = 0;
-      my = 0;
-    }
-    if (b[14]) mx = -1;
+    [mx, my] = applyDeadzone(mx, my, STICK_DEADZONE);
+    if (b[14]) mx = -1; // d-pad
     if (b[15]) mx = 1;
     if (b[12]) my = -1;
     if (b[13]) my = 1;
+
     return {
       mx,
       my,
-      grab: edge(0),
-      use: edge(2),
+      grab: edge(0), // A
+      use: edge(2), // X
       useHeld: !!b[2],
-      dash: edge(1),
-      swap: edge(4) || edge(5),
+      dash: edge(1), // B
+      swap: edge(4) || edge(5), // LB / RB
     };
   }
 
@@ -117,8 +163,9 @@ export class Input {
   poll(): [PadState, PadState] {
     const k1 = this.keyboard('p1');
     const k2 = this.keyboard('p2');
-    const g1 = this.gamepad(0);
-    const g2 = this.gamepad(1);
+    const pads = this.connectedPads();
+    const g1 = pads[0] ? this.readPad(pads[0]) : null;
+    const g2 = pads[1] ? this.readPad(pads[1]) : null;
     this.pressed.clear();
     return [merge(k1, g1), merge(k2, g2)];
   }
@@ -127,6 +174,23 @@ export class Input {
     const p = this.pausePressed;
     this.pausePressed = false;
     return p;
+  }
+
+  /** Dá um "tap" no controle (se ele suportar), pra feedback tátil em eventos
+   * marcantes — nocautear o ladrão, entregar um pedido, pegar fogo. Falha
+   * calada em controles/navegadores sem suporte. */
+  rumble(slot: 0 | 1, strength: number, durationMs: number) {
+    try {
+      const pads = this.connectedPads();
+      const gp = pads[slot] as (Gamepad & { vibrationActuator?: { playEffect: (type: string, params: object) => Promise<unknown> } }) | undefined;
+      void gp?.vibrationActuator?.playEffect('dual-rumble', {
+        duration: durationMs,
+        strongMagnitude: strength,
+        weakMagnitude: strength * 0.7,
+      });
+    } catch {
+      /* controle sem suporte a vibração: ignora */
+    }
   }
 }
 

@@ -128,3 +128,69 @@ tem esses elementos no mapa.
   enquanto `gs.thief` existe, então não pesa no resto do jogo.
 - A vigiar: com só 2 chefs perseguindo, o taco pode ficar longe demais do ladrão em mapas maiores — se algum
   layout futuro for bem maior que os 6 atuais, vale repensar `heistSpeed`/`heistAlarm` nesse caso.
+
+---
+
+# ADR-004: 30 fases, 2 modos novos, gelo e conserto do controle
+
+**Status:** Aceito · **Data:** 2026-10-11
+
+## Contexto
+Pedido: muito mais fases (30), modos de jogo novos, deixar o jogo "mais interessante, interativo", e consertar
+bugs reais no suporte a controle (relatado como "bugado" em algumas partes).
+
+## Decisões
+
+- **O bug do controle era de verdade.** `input.ts` lia `navigator.getGamepads()[0]` pro jogador 1 e `[1]` pro
+  jogador 2 — mas esse índice é a posição que o navegador deu ao controle (estável desde a primeira vez que ele
+  mandou um botão), não "o primeiro plugado". Com um controle só, se ele calhasse de ocupar o slot 1 (comum
+  depois de desconectar/reconectar), o jogador 1 ficava sem resposta nenhuma. Corrigido filtrando os controles
+  realmente conectados e ordenando pelo índice antes de atribuir aos dois jogadores — testado simulando
+  `navigator.getGamepads()` (`scripts/smoke-input.ts`), inclusive o caso específico do bug (controle só, no
+  índice 1). De quebra: zona morta do analógico ganhou reescala suave (em vez de corte duro) e o jogo passou a
+  vibrar o controle em entregas, nocaute no ladrão, queda no buraco e fogo pegando — tudo com *feature-detection*
+  silenciosa pra não quebrar em controle/navegador sem suporte.
+
+- **30 fases, não 30 mecânicas novas.** Construir e testar 10 mecânicas inéditas com o mesmo rigor que o ladrão
+  exigiu (ADR-003) não cabia numa sessão só. Em vez disso, duas peças novas e pequenas — `rush` (multiplicador do
+  ritmo de pedidos, já existia uma fórmula dinâmica em `updateOrders`, só ficou parametrizável) e `ice`
+  (piso escorregadio, calculado como a poça do ladrão — nunca em cima do mapa, sempre longe dos dois spawns) — se
+  combinam com o que já existia (fenda, ladrão, pratos sujos) pra dar variedade real em 30 fases com curva de
+  dificuldade, sem inventar sistemas arriscados demais pra validar a tempo. As fases 1–5 originais não mudaram
+  (o id é a chave do progresso salvo; mudar teria embaralhado o save de quem já jogou).
+
+- **Mundos em acordeão, não 30 cards soltos.** Uma grade plana de 30 cards seria uma rolagem enorme sem
+  estrutura. `WORLDS` (`src/game/content.ts`) só agrupa a exibição — a lógica de fase continua igual, cada uma
+  isolada. O mundo que contém a próxima fase não conquistada abre sozinho; os outros ficam fechados mas
+  clicáveis, então dá pra espiar o que vem (nome, mecânica) sem conseguir jogar antes da hora.
+
+- **Sobrevivência tem relógio, prêmio e fim de partida diferentes da campanha** — por isso virou campo próprio
+  (`endless: { maxStrikes }`) em vez de mais uma combinação de `gap`/`heist`/`ice`. `gs.time` passa a contar PRA
+  CIMA (tempo sobrevivido) em vez de regressivo, e o fim de partida vem de errar `maxStrikes` pedidos, não do
+  cronômetro. Guardei isso atrás de uma flag explícita pra não arriscar um `if` esquecido fazendo uma fase normal
+  se comportar como infinita.
+
+- **Modo Livre e Sobrevivência são `LevelDef` com id fora de 1–30** (`0` e `-1`) — não entram em `LEVELS`/`WORLDS`
+  nem ganham estrela de verdade (limiares de propósito inalcançáveis), mas passam pelo exato mesmo motor,
+  `MapPicker`, pausa e `ResultScreen` que a campanha usa. Zero código novo de navegação; só ids reservados e
+  alguns `if (isCampaign)` na tela de resultado pra não mostrar "faltaram 999940 pontos pra 1ª estrela".
+
+## Testado
+- `npm run test` (5 suítes, `scripts/smoke-*.ts`): controle (índice fora de ordem, zona morta, borda de aperto),
+  gelo (gerado nas 6 arenas sempre longe dos spawns, física de escorregar, `rush` comparado sem e com
+  multiplicador), modos (Livre não acaba sozinho em 5 min simulados; Sobrevivência conta pra cima, acaba sozinha
+  depois de 3 pedidos perdidos, ritmo acelera com o tempo).
+- Corrigi de passagem uma flakiness pré-existente no teste do nocaute do ladrão (a perseguição simulada por IA
+  simples às vezes não alcançava o ladrão dentro da janela de 10s, por puro azar do desvio aleatório dele) —
+  agora tenta até 8 vezes, refletindo que no jogo real o jogador tem várias visitas por partida pra acertar.
+- Navegador: acordeão com os 6 mundos e progresso somado por mundo; fase 30 (fenda + gelo + ladrão + ritmo +
+  cardápio inteiro, tudo junto) rodando sem erro, com fenda e gelo visíveis ao mesmo tempo; mundo bloqueado
+  mostrando o aviso certo; Modo Livre com relógio de 60 minutos; Sobrevivência com relógio subindo e os 3
+  corações da HUD.
+
+## Consequências
+- Mais fácil: fase nova = um item em `LEVELS` + um em `WORLDS`; mecânica de variedade nova (tipo `ice`) só pede
+  um campo opcional em `LevelDef` e uma função `createGame` calculada, seguindo o padrão já aberto pelo ladrão.
+- A vigiar: as 25 fases novas têm progressão de dificuldade pensada (duração, limiares de estrela, intensidade
+  das mecânicas crescendo por mundo) mas não foram jogadas de ponta a ponta por um humano — um ajuste fino de
+  `stars`/`duration` depois de alguns playthroughs reais é esperado, principalmente no mundo 6.
