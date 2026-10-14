@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { Sequencer, type Audio, type LoopVoice } from '../engine/audio'
-import type { Input, PlayerSlot } from '../engine/input'
+import type { Device, Input, PlayerSlot } from '../engine/input'
 import { Physics } from '../engine/physics'
 import type { Renderer } from '../engine/renderer'
 import type { Quality } from '../engine/save'
@@ -45,7 +45,11 @@ export type HudState = {
   countdown: number
   /** Which local player this HUD belongs to. */
   slot: PlayerSlot
-  twoPlayer: boolean
+  /** Split screen is on (2–4 local players). */
+  split: boolean
+  players: number
+  /** This player's own controls in split screen. */
+  device?: Device
 }
 
 /** `slot` is 1 or 2 for a human racer, 0 for the AI. */
@@ -76,13 +80,16 @@ export class Game {
   sensitivity = 1
   readonly scene = new THREE.Scene()
   readonly cam = new ChaseCamera()
-  readonly cam2 = new ChaseCamera()
+  /** One chase camera per local player; `cam` doubles as Player 1's and the menu camera. */
+  readonly cams: ChaseCamera[] = [this.cam, new ChaseCamera(), new ChaseCamera(), new ChaseCamera()]
   readonly track: Track
   racers: Racer[] = []
   ordered: Racer[] = []
   player?: Racer
-  player2?: Racer
-  private localTwoPlayer = false
+  /** Local human racers in slot order (P1 first). */
+  private locals: Racer[] = []
+  /** Each local player's device in split screen (index = slot - 1). */
+  private devices: Device[] = []
   private physics: Physics
   private scenery: Scenery
   private fx: Fx
@@ -171,7 +178,7 @@ export class Game {
     this.racers = []
     this.ordered = []
     this.player = undefined
-    this.player2 = undefined
+    this.locals = []
     this.playerSteer.clear()
     this.items.reset()
     this.fx.clear()
@@ -180,30 +187,27 @@ export class Game {
     this.squashed.clear()
   }
 
-  private spawn(playerChar: Character | null, player2Char: Character | null = null): void {
+  /** Humans line up mid-grid (P1 where solo play always started); AI fills the rest. */
+  private spawn(humans: Character[]): void {
     this.clearRace()
-    const others = ROSTER.filter(c => c !== playerChar && c !== player2Char)
-    // Player 2 starts beside Player 1; AI fills the remaining grid slots.
-    const order: (Character | null)[] = []
-    const playerSlot = 3
-    const player2Slot = 2
+    const HUMAN_GRID = [3, 2, 4, 5]
+    const others = ROSTER.filter(c => !humans.includes(c))
+    const slotAt = new Map(humans.map((_, i) => [HUMAN_GRID[i], i + 1]))
     let k = 0
+    let ai = 0
     for (let i = 0; i < CONFIG.race.racers; i += 1) {
-      order.push(playerChar && i === playerSlot ? playerChar : player2Char && i === player2Slot ? player2Char : others[k++ % others.length])
-    }
-    order.forEach((c, i) => {
-      const ch = c ?? ROSTER[i]
-      const playerIndex = playerChar && i === playerSlot ? 1 : player2Char && i === player2Slot ? 2 : 0
+      const playerIndex = slotAt.get(i) ?? 0
+      const ch = playerIndex ? humans[playerIndex - 1] : (others[k++ % Math.max(1, others.length)] ?? ROSTER[i])
       const isPlayer = playerIndex > 0
-      const aiIndex = isPlayer ? 0 : Math.min(SKILLS.length - 1, i > playerSlot ? i - 1 : i)
+      const aiIndex = isPlayer ? 0 : Math.min(SKILLS.length - 1, ai++)
       const r = new Racer(i, ch, isPlayer, this.physics, this.track, this.track.gridSlot(i), SKILLS[aiIndex])
       r.playerIndex = playerIndex
       this.scene.add(r.view.root, r.view.shadow, ...r.trails.map(t => t.mesh))
-      if (playerIndex === 1) this.player = r
-      if (playerIndex === 2) this.player2 = r
       r.aiUseShortcut = Math.random() < CONFIG.ai.shortcutChance[Math.min(4, aiIndex)]
       this.racers.push(r)
-    })
+    }
+    this.locals = this.racers.filter(r => r.isPlayer).sort((a, b) => a.playerIndex - b.playerIndex)
+    this.player = this.locals[0]
     this.ordered = [...this.racers]
     this.updateStandings()
   }
@@ -211,7 +215,7 @@ export class Game {
   /** Title background: an AI-only race with a roaming camera. */
   startAttract(): void {
     this.mode = 'title'
-    this.spawn(null)
+    this.spawn([])
     this.phase = 'racing'
     this.raceTime = 0
     for (const r of this.racers) r.kart.boost(0.5 + Math.random())
@@ -246,13 +250,13 @@ export class Game {
     this.showroom = undefined
   }
 
-  startRace(characterId: string, tutorial: boolean, secondCharacterId?: string): void {
+  /** `characterIds[i]` is local player i+1's racer; with more than one, `devices` says who drives with what. */
+  startRace(characterIds: string[], tutorial: boolean, devices: Device[] = []): void {
     tuning.activate('run')
     this.runUnranked = tuning.unranked
-    this.localTwoPlayer = !!secondCharacterId
-    this.input.resetSplit()
+    this.devices = characterIds.length > 1 ? devices.slice(0, characterIds.length) : []
     this.removeShowroom()
-    this.spawn(characterById(characterId), secondCharacterId ? characterById(secondCharacterId) : null)
+    this.spawn(characterIds.map(characterById))
     this.mode = 'playing'
     this.phase = 'intro'
     this.phaseTime = 0
@@ -267,15 +271,14 @@ export class Game {
     this.resultsShown = false
     this.finishedResult = undefined
     // Split screen shows a controls card for both players instead of the step-by-step tutorial.
-    this.tutorial = tutorial && !this.localTwoPlayer
+    this.tutorial = tutorial && !this.split
     this.tutorialStep = this.tutorial ? 'drive' : 'none'
     for (const p of this.humans()) this.lastPlace.set(this.slotOf(p), p.place)
-    this.cam.mode = 'flyby'
-    this.cam2.mode = 'flyby'
-    this.cam.resetTime()
-    this.cam2.resetTime()
-    this.cam.snap()
-    this.cam2.snap()
+    for (const c of this.cams) {
+      c.mode = 'flyby'
+      c.resetTime()
+      c.snap()
+    }
     for (const l of this.scenery.startLights) (l.material as THREE.MeshBasicMaterial).color.set('#3a2440')
     this.music.stop()
     this.startLoops()
@@ -347,10 +350,10 @@ export class Game {
       if (this.phaseTime > 3.2) {
         this.phase = 'countdown'
         this.phaseTime = 0
-        this.cam.mode = 'chase'
-        this.cam2.mode = this.localTwoPlayer ? 'chase' : 'flyby'
-        this.cam.snap()
-        this.cam2.snap()
+        for (const c of this.cams) {
+          c.mode = 'chase'
+          c.snap()
+        }
         if (this.tutorial) this.hooks.hint('drive')
       }
     }
@@ -596,7 +599,7 @@ export class Game {
   private handleEvents(r: Racer): void {
     const me = r.isPlayer
     const cam = this.camFor(r)
-    const pad = this.twoPlayer && me ? this.slotOf(r) : undefined
+    const pad = me ? this.deviceOf(r) : undefined
     const near = this.humans().some(p => r.position.distanceTo(p.position) < 45)
     for (const e of r.events) {
       switch (e.type) {
@@ -720,7 +723,7 @@ export class Game {
       this.hooks.toast('toast.squashed', {}, slot)
       this.audio.play('hitMe')
       this.camFor(r).addTrauma(0.7)
-      this.input.rumble(1, 0.7, 260, this.twoPlayer ? slot : undefined)
+      this.input.rumble(1, 0.7, 260, this.deviceOf(r))
     }
   }
 
@@ -730,7 +733,7 @@ export class Game {
       this.audio.play('hitMe')
       this.camFor(victim).addTrauma(0.75)
       this.hitstop = 0.07
-      this.input.rumble(1, 0.8, 300, this.twoPlayer ? this.slotOf(victim) : undefined)
+      this.input.rumble(1, 0.8, 300, this.deviceOf(victim))
     } else if (by?.isPlayer) {
       this.hooks.toast(kind === 'bee' ? 'toast.beeHit' : 'toast.taffyHit', { name: `char.${victim.character.id}.name` }, this.slotOf(by))
       this.hitstop = 0.04
@@ -742,7 +745,7 @@ export class Game {
       r.finishPlace = this.racers.filter(o => o.finished).length
       if (!r.isPlayer) return
       const slot = this.slotOf(r)
-      if (this.localTwoPlayer) {
+      if (this.split) {
         // The first one across gets a victory orbit on their half while the other keeps racing.
         this.camFor(r).mode = 'orbit'
         this.camFor(r).resetTime()
@@ -770,7 +773,7 @@ export class Game {
     this.phase = 'done'
     this.cam.mode = 'orbit'
     this.cam.resetTime()
-    if (!this.localTwoPlayer) {
+    if (!this.split) {
       this.hooks.banner('finish', { place: p.finishPlace })
       this.audio.play(p.finishPlace <= 3 ? 'finish' : 'lose')
       this.fx.confetti(p.position.clone().setY(p.position.y + 2), 60, 1.4)
@@ -792,7 +795,7 @@ export class Game {
     players.sort((a, b) => a.slot - b.slot)
     const mine = players[0]
     // Leaderboard entries are single-player runs; a local 2P race is just for bragging rights.
-    this.finishedResult = { rows, place: mine.place, time: mine.time, bestLap: mine.bestLap, character: p.character.id, unranked: this.runUnranked || this.localTwoPlayer, players }
+    this.finishedResult = { rows, place: mine.place, time: mine.time, bestLap: mine.bestLap, character: p.character.id, unranked: this.runUnranked || this.split, players }
   }
 
   private playerChecks(p: Racer, dt: number): void {
@@ -854,31 +857,38 @@ export class Game {
 
   // ─── local players ───────────────────────────────────────────────
 
-  /** True while a split-screen race is set up (both humans on the grid). */
-  get twoPlayer(): boolean {
-    return this.localTwoPlayer && !!this.player2
+  /** True while a split-screen race is set up (2–4 humans on the grid). */
+  get split(): boolean {
+    return this.locals.length > 1
   }
 
   /** Human racers, Player 1 first. */
   humans(): Racer[] {
-    return [this.player, this.player2].filter((r): r is Racer => !!r)
+    return this.locals
   }
 
   private slotOf(r: Racer): PlayerSlot {
-    return r.playerIndex === 2 ? 2 : 1
+    return Math.min(4, Math.max(1, r.playerIndex)) as PlayerSlot
+  }
+
+  /** The device a split-screen player drives with (undefined when solo: every device drives). */
+  private deviceOf(r: Racer): Device | undefined {
+    return this.split && r.isPlayer ? this.devices[this.slotOf(r) - 1] : undefined
   }
 
   private camFor(r: Racer): ChaseCamera {
-    return r.playerIndex === 2 && this.twoPlayer ? this.cam2 : this.cam
+    return this.split && r.isPlayer ? this.cams[this.slotOf(r) - 1] : this.cam
   }
 
-  /** Solo play reads every device; split screen gives each player their half of the keyboard. */
+  /** Solo play reads every device; split screen reads only each player's own device. */
   private axesFor(slot: PlayerSlot): { steer: number; throttle: number; brake: number } {
-    return this.twoPlayer ? this.input.splitAxes(slot) : this.input.axes
+    const d = this.split ? this.devices[slot - 1] : undefined
+    return d ? this.input.deviceAxes(d) : this.input.axes
   }
 
   private heldFor(slot: PlayerSlot, action: 'drift' | 'item' | 'lookBack'): boolean {
-    return this.twoPlayer ? this.input.splitHeld(slot, action) : this.input.held(action)
+    const d = this.split ? this.devices[slot - 1] : undefined
+    return d ? this.input.deviceHeld(d, action) : this.input.held(action)
   }
 
   private updateChaseCamera(camera: ChaseCamera, racer: Racer, dt: number, alpha: number): void {
@@ -895,10 +905,12 @@ export class Game {
 
   render(alpha: number, frameSeconds: number): void {
     const dt = Math.min(frameSeconds, 0.05)
-    const split = this.twoPlayer && (this.mode === 'playing' || this.mode === 'paused')
+    const split = this.split && (this.mode === 'playing' || this.mode === 'paused')
     document.body.classList.toggle('local-split', split)
+    if (split) document.body.dataset.players = String(this.locals.length)
+    else delete document.body.dataset.players
     const focusRacer = this.mode === 'title' ? this.racers[this.attractTarget] : this.player
-    const camPositions = split ? [this.cam.camera.position, this.cam2.camera.position] : [this.cam.camera.position]
+    const camPositions = split ? this.locals.map(r => this.camFor(r).camera.position) : [this.cam.camera.position]
     for (const r of this.racers) {
       const near = camPositions.some(c => r.position.distanceToSquared(c) < 110 * 110)
       r.animate(alpha, dt, this.time, this.fx, near)
@@ -933,15 +945,18 @@ export class Game {
       this.cam.snap()
     } else if (focusRacer) {
       this.updateChaseCamera(this.cam, focusRacer, dt, alpha)
-      if (split && this.player2) this.updateChaseCamera(this.cam2, this.player2, dt, alpha)
+      if (split) for (const r of this.locals.slice(1)) this.updateChaseCamera(this.camFor(r), r, dt, alpha)
     }
     const focus = this.mode === 'select' ? this.showroomAt : (focusRacer?.position ?? this.track.main.at(0).pos)
     this.scenery.update(this.time, dt, focus)
     if (this.mode !== 'paused') this.fx.updateAmbient(dt, this.cam.camera.position)
     this.updateAudio()
-    if (split && this.player2) {
-      const targets = [focusRacer ?? this.player!, this.player2]
-      this.renderer.renderSplit(this.scene, [this.cam.camera, this.cam2.camera], i => this.scenery.aim(targets[i].position))
+    if (split) {
+      this.renderer.renderViews(
+        this.scene,
+        this.locals.map(r => this.camFor(r).camera),
+        i => this.scenery.aim(this.locals[i].position),
+      )
     } else this.renderer.render(this.scene, this.cam.camera)
   }
 
@@ -975,7 +990,7 @@ export class Game {
   // ─── HUD ─────────────────────────────────────────────────────────
 
   hud(slot: PlayerSlot = 1): HudState {
-    const p = (slot === 2 ? this.player2 : this.player) ?? this.player!
+    const p = this.locals[slot - 1] ?? this.player!
     const k = p.kart
     return {
       phase: this.phase,
@@ -999,7 +1014,9 @@ export class Game {
       finished: p.finished,
       countdown: this.phase === 'countdown' ? Math.max(0, CONFIG.race.countdown + 0.6 - this.phaseTime) : 0,
       slot,
-      twoPlayer: this.twoPlayer,
+      split: this.split,
+      players: this.locals.length,
+      device: this.devices[slot - 1],
     }
   }
 }

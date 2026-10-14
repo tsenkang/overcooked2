@@ -23,23 +23,42 @@ const KEY_BINDINGS: Record<Action, string[]> = {
 const STEER_KEYS = { left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'] }
 
 /**
- * Local two-player on one keyboard (split screen): the left hand drives Player 1, the right hand
- * drives Player 2. Pause stays shared (Esc / P).
+ * Local multiplayer (split screen, up to four): every player owns one device, either one of four
+ * keyboard zones or a gamepad. Pause stays shared (Esc / P / Start).
  */
-export type PlayerSlot = 1 | 2
-type DriveKeys = { left: string[]; right: string[]; accelerate: string[]; brake: string[]; drift: string[]; item: string[]; lookBack: string[] }
-export const SPLIT_KEYS: Record<PlayerSlot, DriveKeys> = {
-  1: { left: ['KeyA'], right: ['KeyD'], accelerate: ['KeyW'], brake: ['KeyS'], drift: ['ShiftLeft'], item: ['Space', 'KeyE'], lookBack: ['KeyC'] },
+export type PlayerSlot = 1 | 2 | 3 | 4
+export const MAX_PLAYERS = 4
+export type KeySet = 0 | 1 | 2 | 3
+/** A local player's controls: a keyboard zone, or a gamepad by its browser slot. */
+export type Device = { kind: 'keys'; set: KeySet } | { kind: 'pad'; index: number }
+type DriveKeys = { left: string[]; right: string[]; accelerate: string[]; brake: string[]; drift: string[]; item: string[]; lookBack: string[]; caps: Record<'left' | 'right' | 'accelerate' | 'brake' | 'drift' | 'item' | 'lookBack', string> }
+export const KEY_SETS: Record<KeySet, DriveKeys> = {
+  0: {
+    left: ['KeyA'], right: ['KeyD'], accelerate: ['KeyW'], brake: ['KeyS'], drift: ['ShiftLeft'], item: ['Space', 'KeyE'], lookBack: ['KeyC'],
+    caps: { left: 'A', right: 'D', accelerate: 'W', brake: 'S', drift: 'Shift', item: 'Space', lookBack: 'C' },
+  },
+  1: {
+    left: ['ArrowLeft'], right: ['ArrowRight'], accelerate: ['ArrowUp'], brake: ['ArrowDown'], drift: ['ShiftRight'], item: ['Enter', 'ControlRight', 'Slash'], lookBack: ['Period'],
+    caps: { left: '←', right: '→', accelerate: '↑', brake: '↓', drift: 'Shift', item: 'Enter', lookBack: '.' },
+  },
   2: {
-    left: ['ArrowLeft'],
-    right: ['ArrowRight'],
-    accelerate: ['ArrowUp'],
-    brake: ['ArrowDown'],
-    drift: ['ShiftRight', 'Numpad0'],
-    item: ['Enter', 'NumpadEnter', 'ControlRight', 'Slash'],
-    lookBack: ['Period', 'NumpadDecimal'],
+    left: ['KeyJ'], right: ['KeyL'], accelerate: ['KeyI'], brake: ['KeyK'], drift: ['KeyU'], item: ['KeyO'], lookBack: ['KeyM'],
+    caps: { left: 'J', right: 'L', accelerate: 'I', brake: 'K', drift: 'U', item: 'O', lookBack: 'M' },
+  },
+  3: {
+    left: ['Numpad4'], right: ['Numpad6'], accelerate: ['Numpad8'], brake: ['Numpad5'], drift: ['Numpad0'], item: ['NumpadEnter', 'NumpadAdd'], lookBack: ['NumpadDecimal'],
+    caps: { left: 'Num4', right: 'Num6', accelerate: 'Num8', brake: 'Num5', drift: 'Num0', item: 'NumEnter', lookBack: 'Num,' },
   },
 }
+const KEY_SET_IDS: KeySet[] = [0, 1, 2, 3]
+
+/** One-shot lobby signal from a specific device: join, pick left/right, start, leave. */
+export type DeviceEdge = { device: Device; action: 'join' | 'left' | 'right' | 'go' | 'back' }
+
+export function sameDevice(a: Device, b: Device): boolean {
+  return a.kind === b.kind && (a.kind === 'keys' ? a.set === (b as { set: KeySet }).set : a.index === (b as { index: number }).index)
+}
+
 // Standard mapping: A=0 B=1 X=2 Y=3 LB=4 RB=5 LT=6 RT=7 Back=8 Start=9 L3=10 R3=11 D-pad 12..15.
 const PAD_BINDINGS: Record<Action, number[]> = {
   accelerate: [7, 0],
@@ -53,7 +72,7 @@ const PAD_BINDINGS: Record<Action, number[]> = {
 }
 
 /** One connected gamepad, sampled this frame. */
-type PadState = { index: number; steer: number; throttle: number; brake: number; moveX: number; moveY: number; held: Set<Action> }
+type PadState = { index: number; steer: number; throttle: number; brake: number; moveX: number; moveY: number; held: Set<Action>; buttons: boolean[] }
 
 /** Connected gamepads in slot order. Never throws (a frame's permissions policy can block the API). */
 function connectedPads(): Gamepad[] {
@@ -86,13 +105,11 @@ export class Input {
   private touchSteer = 0
   private touchButtons = new Set<Action>()
   private padPrev = new Map<number, Set<Action>>()
+  /** Last frame's raw buttons and stick direction per pad, for lobby edges. */
+  private padRaw = new Map<number, { buttons: boolean[]; dir: number }>()
   private pads: PadState[] = []
-  /** Pad indices in the order they were first used; idle or phantom pads never get a player. */
-  private padOrder: number[] = []
-  /** Which half of the keyboard last steered or pedalled (split screen). */
-  private lastKeyboardHalf: PlayerSlot | 0 = 0
-  /** Player-chosen override: hand the pads to the other players (pause menu). */
-  padSwap = false
+  private edges: (DeviceEdge & { frame: number })[] = []
+  private frame = 0
   private gamepadHeld_ = new Set<Action>()
   private listeners: Array<() => void> = []
 
@@ -107,15 +124,20 @@ export class Input {
       if (!e.repeat) {
         this.keys.add(e.code)
         this.method = 'keyboard'
-        for (const slot of [1, 2] as PlayerSlot[]) {
-          const k = SPLIT_KEYS[slot]
-          if ([...k.left, ...k.right, ...k.accelerate, ...k.brake].includes(e.code)) this.lastKeyboardHalf = slot
+        for (const set of KEY_SET_IDS) {
+          const k = KEY_SETS[set]
+          const device: Device = { kind: 'keys', set }
+          const edge = (action: DeviceEdge['action']) => this.edges.push({ device, action, frame: this.frame })
+          if (k.accelerate.includes(e.code)) edge('join')
+          if (k.left.includes(e.code)) edge('left')
+          if (k.right.includes(e.code)) edge('right')
+          if (k.item.includes(e.code)) edge('go')
         }
         for (const [action, codes] of Object.entries(KEY_BINDINGS) as [Action, string[]][]) {
           if (codes.includes(e.code)) this.pressed_.add(action)
         }
       }
-      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Tab' || e.code === 'Slash') e.preventDefault()
+      if (e.code === 'Space' || e.code.startsWith('Arrow') || e.code === 'Tab' || e.code === 'Slash' || e.code.startsWith('Numpad')) e.preventDefault()
     })
     on('keyup', e => this.keys.delete(e.code))
     on('blur', () => this.keys.clear())
@@ -166,10 +188,19 @@ export class Input {
       const lt = pad.buttons[6]?.value ?? 0
       const dpadX = (pad.buttons[15]?.pressed ? 1 : 0) - (pad.buttons[14]?.pressed ? 1 : 0)
       const dpadY = (pad.buttons[12]?.pressed ? 1 : 0) - (pad.buttons[13]?.pressed ? 1 : 0)
-      if (lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)) {
-        this.method = 'gamepad'
-        if (!this.padOrder.includes(pad.index)) this.padOrder.push(pad.index)
-      }
+      if (lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)) this.method = 'gamepad'
+      // Lobby edges: A joins, X/Y/Start starts, B leaves, stick or d-pad flicks pick a racer.
+      const buttons = pad.buttons.map(b => b.pressed)
+      const raw = this.padRaw.get(pad.index)
+      const down = (i: number) => buttons[i] && !raw?.buttons[i]
+      const device: Device = { kind: 'pad', index: pad.index }
+      const edge = (action: DeviceEdge['action']) => this.edges.push({ device, action, frame: this.frame })
+      if (down(0)) edge('join')
+      if (down(2) || down(3) || down(9)) edge('go')
+      if (down(1)) edge('back')
+      const dir = (lx || dpadX) > 0.6 ? 1 : (lx || dpadX) < -0.6 ? -1 : 0
+      if (dir !== 0 && dir !== (raw?.dir ?? 0)) edge(dir > 0 ? 'right' : 'left')
+      this.padRaw.set(pad.index, { buttons, dir })
       const held = new Set<Action>()
       for (const [action, buttons] of Object.entries(PAD_BINDINGS) as [Action, number[]][]) {
         if (buttons.some(i => pad.buttons[i]?.pressed)) held.add(action)
@@ -186,10 +217,14 @@ export class Input {
         moveX: lx || dpadX,
         moveY: -ly || dpadY,
         held,
+        buttons,
       }
     })
     for (const index of [...this.padPrev.keys()]) if (!seen.has(index)) this.padPrev.delete(index)
-    this.padOrder = this.padOrder.filter(index => seen.has(index))
+    for (const index of [...this.padRaw.keys()]) if (!seen.has(index)) this.padRaw.delete(index)
+    // Edges live for one rendered frame; whoever needs them (the lobby) takes them in that frame.
+    this.edges = this.edges.filter(e => e.frame >= this.frame)
+    this.frame += 1
     if (this.pads.length) {
       // Solo play and menus: any pad drives.
       const merged = {
@@ -233,65 +268,37 @@ export class Input {
     return this.gamepadHeld_.has(action)
   }
 
-  /** Gamepads that have been used (connected but untouched pads don't count). */
+  /** Gamepads connected right now. */
   get padCount(): number {
-    return this.activePads().length
-  }
-
-  private activePads(): PadState[] {
-    return this.padOrder.map(i => this.pads.find(p => p.index === i)).filter((p): p is PadState => !!p)
-  }
-
-  /**
-   * Which gamepad a split-screen player owns. Two used pads: the first one touched drives P1,
-   * the second P2. One pad: it drives the kart the keyboard is not driving (WASD in use → P2,
-   * arrows in use → P1, keyboard untouched → P1), so a keyboard player and a pad player never
-   * end up on the same kart.
-   */
-  private padFor(slot: PlayerSlot): PadState | undefined {
-    const pads = this.activePads()
-    let owners: [PadState | undefined, PadState | undefined]
-    if (pads.length >= 2) owners = [pads[0], pads[1]]
-    else owners = this.lastKeyboardHalf === 1 ? [undefined, pads[0]] : [pads[0], undefined]
-    if (this.padSwap) owners = [owners[1], owners[0]]
-    return owners[slot - 1]
-  }
-
-  /** Split screen: does this player currently drive with a gamepad? (HUD / pause status) */
-  hasPad(slot: PlayerSlot): boolean {
-    return !!this.padFor(slot)
-  }
-
-  /** Connected gamepads, including ones nobody has pressed yet. */
-  get connectedPadCount(): number {
     return this.pads.length
   }
 
-  /** New split-screen race: menu key presses shouldn't decide who gets the pad. */
-  resetSplit(): void {
-    this.lastKeyboardHalf = 0
-  }
-
-  /**
-   * Split-screen driving: each player's half of the keyboard plus their own gamepad, if any.
-   * Whichever source pushes harder wins, so both work without a setting.
-   */
-  splitAxes(slot: PlayerSlot): { steer: number; throttle: number; brake: number } {
-    const keys = SPLIT_KEYS[slot]
-    const k = (codes: string[]) => codes.some(code => this.keys.has(code))
-    const out = { steer: (k(keys.right) ? 1 : 0) - (k(keys.left) ? 1 : 0), throttle: k(keys.accelerate) ? 1 : 0, brake: k(keys.brake) ? 1 : 0 }
-    const pad = this.padFor(slot)
-    if (pad) {
-      out.steer = strongest([out.steer, pad.steer])
-      out.throttle = Math.max(out.throttle, pad.throttle)
-      out.brake = Math.max(out.brake, pad.brake)
-    }
+  /** Lobby: device signals since the last frame (join, pick, start, leave). */
+  takeEdges(): DeviceEdge[] {
+    const out = this.edges.map(({ device, action }) => ({ device, action }))
+    this.edges = []
     return out
   }
 
-  splitHeld(slot: PlayerSlot, action: 'drift' | 'item' | 'lookBack'): boolean {
-    const held = SPLIT_KEYS[slot][action].some(code => this.keys.has(code))
-    return held || !!this.padFor(slot)?.held.has(action)
+  /** Driving axes from one player's own device (split screen). */
+  deviceAxes(d: Device): { steer: number; throttle: number; brake: number } {
+    if (d.kind === 'pad') {
+      const pad = this.pads.find(p => p.index === d.index)
+      return pad ? { steer: pad.steer, throttle: pad.throttle, brake: pad.brake } : { steer: 0, throttle: 0, brake: 0 }
+    }
+    const keys = KEY_SETS[d.set]
+    const k = (codes: string[]) => codes.some(code => this.keys.has(code))
+    return { steer: (k(keys.right) ? 1 : 0) - (k(keys.left) ? 1 : 0), throttle: k(keys.accelerate) ? 1 : 0, brake: k(keys.brake) ? 1 : 0 }
+  }
+
+  deviceHeld(d: Device, action: 'drift' | 'item' | 'lookBack'): boolean {
+    if (d.kind === 'pad') return !!this.pads.find(p => p.index === d.index)?.held.has(action)
+    return KEY_SETS[d.set][action].some(code => this.keys.has(code))
+  }
+
+  /** Is this gamepad still plugged in? */
+  padConnected(index: number): boolean {
+    return this.pads.some(p => p.index === index)
   }
 
   pressed(action: Action): boolean {
@@ -307,10 +314,11 @@ export class Input {
     this.pressed_.clear()
   }
 
-  /** Gamepad rumble where supported (Chrome/Edge dual-rumble). With a slot, only that player's pad. */
-  rumble(strong: number, weak: number, ms: number, slot?: PlayerSlot): void {
-    if (slot === undefined && this.method !== 'gamepad') return
-    const index = slot === undefined ? this.pads[0]?.index : this.padFor(slot)?.index
+  /** Gamepad rumble where supported (Chrome/Edge dual-rumble). With a device, only that player's pad. */
+  rumble(strong: number, weak: number, ms: number, device?: Device): void {
+    if (device === undefined && this.method !== 'gamepad') return
+    if (device?.kind === 'keys') return
+    const index = device === undefined ? this.pads[0]?.index : device.index
     if (index === undefined) return
     const pad = connectedPads().find(p => p.index === index) as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, o: object) => Promise<unknown> } }) | undefined
     pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: Math.min(1, strong), weakMagnitude: Math.min(1, weak) })?.catch?.(() => undefined)

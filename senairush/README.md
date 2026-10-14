@@ -48,28 +48,32 @@ pnpm smoke    # after build: headless browser playthrough + screenshots in shots
 - **Colliders come from the helpers** in `physics.ts` with the same sizes as the meshes.
 - Keep `npm run build` within budget (`scripts/check-size.mjs`) and `npm run smoke` green.
 
-## Modo 2 jogadores (tela dividida)
+## Multijogador local (até 4, tela dividida)
 
-Na tela de escolha de piloto, aperte **"1 player"** para trocar para **"2 players · split screen"**.
-O botão **"P2: …"** troca o piloto do Jogador 2 (o J1 escolhe clicando nos cards). A tela se divide
-como no Mario Kart: **J1 em cima, J2 embaixo**, cada um com sua câmera, posição, volta, item e
-velocímetro. O minimapa mostra os dois (contorno amarelo = J1, azul = J2).
+1. Na escolha de piloto, aperte o botão **"1 player"** até chegar no número de jogadores (2, 3 ou 4) e
+   clique em **Start race**.
+2. Na tela **"Join the race"**, cada pessoa **entra apertando ACELERAR no seu próprio controle**:
+   `W`, `↑`, `I` ou `Num 8` no teclado, ou **A** num gamepad. Quem entra primeiro é o J1, depois J2…
+3. Cada um escolhe o piloto virando para a esquerda/direita no próprio controle (ou clicando ◀ ▶).
+   **B** (gamepad) ou **Esc** sai.
+4. Com todos dentro, aperte o botão de item (`Espaço`, `Enter`, `O`, **X**) ou **Start race**.
 
-| Ação | Jogador 1 (lado esquerdo) | Jogador 2 (lado direito) |
-| --- | --- | --- |
-| Acelerar / frear | W / S | ↑ / ↓ |
-| Virar | A / D | ← / → |
-| Drift (segurar) | Shift esquerdo | Shift direito (ou Num 0) |
-| Usar item | Espaço (ou E) | Enter (ou Ctrl direito, /) |
-| Olhar para trás | C | . (ponto) |
-| Pausar | Esc / P | Esc / P |
+A tela se divide como no Mario Kart: 2 jogadores em cima/embaixo; 3 ou 4 em quatro quadros
+(com 3, o quadro livre mostra o mapa grande). Cada jogador tem câmera e HUD próprios, e a etiqueta
+no topo de cada quadro mostra o controle dele (ex.: `P2 · 🎮1`). O menu de pausa lista quem usa o quê.
 
-Controles (gamepad) também funcionam. Com **1 controle**, ele dirige o kart que o teclado não está
-usando: quem joga no WASD fica com o J1 e o controle vira J2; quem joga nas setas fica com o J2 e o
-controle vira J1. Com **2 controles**, o primeiro em que alguém apertar um botão é o J1. O teclado
-continua valendo junto. Quem cruzar a linha primeiro
-ganha a câmera de comemoração na sua metade enquanto o outro termina; o resultado mostra quem venceu.
-Corridas em 2 jogadores não entram no ranking local.
+| Ação | WASD | Setas | IJKL | Teclado numérico | Gamepad |
+| --- | --- | --- | --- | --- | --- |
+| Acelerar / frear | W / S | ↑ / ↓ | I / K | 8 / 5 | A (ou RT) / B (ou LT) |
+| Virar | A / D | ← / → | J / L | 4 / 6 | analógico ou direcional |
+| Drift (segurar) | Shift esq. | Shift dir. | U | 0 | RB |
+| Usar item | Espaço | Enter | O | Enter (num) | X |
+| Olhar para trás | C | . | M | , (num) | R3 |
+| Pausar | Esc / P | Esc / P | Esc / P | Esc / P | Start |
+
+Pode misturar à vontade (ex.: 2 no teclado + 2 com gamepad). Alguns teclados não registram muitas
+teclas ao mesmo tempo; com 3 ou 4 pessoas no mesmo teclado, prefira gamepads para parte delas.
+Corridas multijogador não entram no ranking local.
 
 ## Controls
 

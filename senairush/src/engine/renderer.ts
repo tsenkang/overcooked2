@@ -86,30 +86,37 @@ export class Renderer {
 
 
   /**
-   * Local two-player split screen, stacked like a console kart racer: Player 1 on the top half,
-   * Player 2 on the bottom half. `before(i)` runs ahead of each half (e.g. to move the shadow
-   * frustum onto that player). Bloom is skipped here; two composers would double the cost.
+   * Local split screen, laid out like a console kart racer: two players stack top/bottom; three
+   * or four share quadrants (P1 top-left, P2 top-right, P3 bottom-left, P4 bottom-right; with
+   * three the last quadrant is left for the map). `before(i)` runs ahead of each view, e.g. to
+   * move the shadow frustum onto that player. Bloom is skipped; one composer per view costs too much.
    */
-  renderSplit(scene: THREE.Scene, cameras: [THREE.PerspectiveCamera, THREE.PerspectiveCamera], before?: (i: number) => void): void {
+  renderViews(scene: THREE.Scene, cameras: THREE.PerspectiveCamera[], before?: (i: number) => void): void {
     const w = this.canvas.clientWidth || window.innerWidth
     const h = this.canvas.clientHeight || window.innerHeight
-    const top = Math.floor(h / 2)
-    // WebGL viewports count from the bottom edge, in CSS pixels (three applies the pixel ratio).
-    const halves = [
-      { y: h - top, height: top },
-      { y: 0, height: h - top },
-    ]
+    const rects = splitRects(cameras.length, w, h)
     this.gl.setScissorTest(true)
-    halves.forEach((v, i) => {
+    rects.forEach((r, i) => {
       const cam = cameras[i]
-      const aspect = w / Math.max(1, v.height)
+      if (!cam) {
+        // Spare quadrant (three players): plain backdrop under the big map.
+        this.gl.setScissor(r.x, r.y, r.w, r.h)
+        this.gl.setViewport(r.x, r.y, r.w, r.h)
+        const prev = this.gl.getClearColor(new THREE.Color())
+        const alpha = this.gl.getClearAlpha()
+        this.gl.setClearColor('#16384f', 1)
+        this.gl.clear()
+        this.gl.setClearColor(prev, alpha)
+        return
+      }
+      const aspect = r.w / Math.max(1, r.h)
       if (Math.abs(cam.aspect - aspect) > 1e-3) {
         cam.aspect = aspect
         cam.updateProjectionMatrix()
       }
       before?.(i)
-      this.gl.setScissor(0, v.y, w, v.height)
-      this.gl.setViewport(0, v.y, w, v.height)
+      this.gl.setScissor(r.x, r.y, r.w, r.h)
+      this.gl.setViewport(r.x, r.y, r.w, r.h)
       this.gl.render(scene, cam)
     })
     this.gl.setScissorTest(false)
@@ -127,4 +134,22 @@ export class Renderer {
     if (composer) composer.render()
     else this.gl.render(scene, camera)
   }
+}
+
+/** Viewports in CSS pixels, WebGL-style (y counts up from the bottom edge). */
+function splitRects(players: number, w: number, h: number): { x: number; y: number; w: number; h: number }[] {
+  const top = Math.floor(h / 2)
+  if (players <= 2) {
+    return [
+      { x: 0, y: h - top, w, h: top },
+      { x: 0, y: 0, w, h: h - top },
+    ].slice(0, Math.max(1, players))
+  }
+  const left = Math.floor(w / 2)
+  return [
+    { x: 0, y: h - top, w: left, h: top },
+    { x: left, y: h - top, w: w - left, h: top },
+    { x: 0, y: 0, w: left, h: h - top },
+    { x: left, y: 0, w: w - left, h: h - top },
+  ]
 }

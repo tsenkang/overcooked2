@@ -1,6 +1,6 @@
 import type { Audio } from '../engine/audio'
 import type { I18n } from '../engine/i18n'
-import type { Input, PlayerSlot } from '../engine/input'
+import { KEY_SETS, MAX_PLAYERS, sameDevice, type Device, type Input, type PlayerSlot } from '../engine/input'
 import { insertEntry, type Locale, type Quality, type SaveData, type SaveStore } from '../engine/save'
 import { ROSTER, characterById } from '../game/characters'
 import { ITEM_KINDS, type ItemKind } from '../game/config'
@@ -8,12 +8,13 @@ import type { Hint, HudState, RaceResult } from '../game/game'
 import { formatTime, ordinalSuffix } from '../game/rules'
 import { ICON, ITEM_ICONS, PAD_GLYPH, keyCap } from './icons'
 
-export type Screen = 'boot' | 'title' | 'select' | 'hud' | 'pause' | 'settings' | 'leaderboard' | 'results'
+export type Screen = 'boot' | 'title' | 'select' | 'lobby' | 'hud' | 'pause' | 'settings' | 'leaderboard' | 'results'
 
 export type UiActions = {
   race(): void
   selectChanged(id: string): void
-  startRace(id: string, secondId?: string): void
+  /** One racer per local player; with several, each player's device too. */
+  startRace(racers: string[], devices: Device[]): void
   backToTitle(): void
   resume(): void
   restart(): void
@@ -34,7 +35,7 @@ const h = (html: string): HTMLElement => {
 
 /** Per-player HUD state (split screen keeps one of these for each half). */
 type ViewState = { lastPlace: number; rouletteTimer: number; rouletteIndex: number; toastTimer: number }
-const SLOTS: PlayerSlot[] = [1, 2]
+const SLOTS: PlayerSlot[] = [1, 2, 3, 4]
 
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 
@@ -44,8 +45,12 @@ export class Ui {
   private readonly screens = new Map<Screen, HTMLElement>()
   private portraits = new Map<string, string>()
   private selected: string
-  private secondSelected = 'hedgehog'
-  private localTwoPlayer = false
+  /** How many local players the next race has (1 = solo, any device drives). */
+  private playerCount = 1
+  /** Lobby: players who have joined, in slot order, with their device and racer. */
+  private lobby: { device: Device; character: string }[] = []
+  /** Devices of the race in progress (split screen), for the controls card and pause menu. */
+  private raceDevices: Device[] = []
   private settingsReturn: Screen = 'title'
   private outline?: Outline
   private mapBounds = { minX: 0, maxX: 1, minZ: 0, maxZ: 1 }
@@ -120,8 +125,7 @@ export class Ui {
         </div>
         <div class="select-info panel" data-info></div>
         <div class="select-actions">
-          <button class="btn btn-local" data-nav data-act="toggle-local" data-local-toggle></button>
-          <button class="btn btn-p2" data-nav data-act="cycle-p2" data-p2></button>
+          <button class="btn btn-local" data-nav data-act="players" data-players-btn></button>
           <button class="btn" data-nav data-act="back"><span data-i18n="menu.back"></span></button>
           <button class="btn btn-primary btn-big" data-nav data-act="start">${ICON.flag}<span data-i18n="menu.start"></span></button>
         </div>
@@ -149,10 +153,22 @@ export class Ui {
         <div class="toast" data-toast></div>
       </div>`
     add(
+      'lobby',
+      h(`<section><div class="panel modal wide lobby">
+        <h2 class="panel-title" data-i18n="lobby.title"></h2>
+        <p class="lobby-help" data-lobby-help></p>
+        <div class="lobby-slots" data-lobby-slots></div>
+        <p class="lobby-status" data-lobby-status></p>
+        <div class="modal-actions">
+          <button class="btn" data-nav data-act="back"><span data-i18n="menu.back"></span></button>
+          <button class="btn btn-primary" data-nav data-act="lobby-go" data-lobby-go>${ICON.flag}<span data-i18n="menu.start"></span></button>
+        </div>
+      </div></section>`),
+    )
+    add(
       'hud',
       h(`<section>
-        ${view(1)}
-        ${view(2)}
+        ${SLOTS.map(view).join('')}
         <button class="pausebtn" data-act="pause" aria-label="pause">${ICON.pause}</button>
         <div class="hud-bl"><canvas class="minimap" data-minimap width="220" height="220"></canvas></div>
         <div class="center center-count"><div class="count" data-count></div></div>
@@ -168,7 +184,6 @@ export class Ui {
         <nav class="menu">
           <button class="btn btn-primary" data-nav data-act="resume"><span data-i18n="menu.resume"></span></button>
           <button class="btn" data-nav data-act="restart"><span data-i18n="menu.restart"></span></button>
-          <button class="btn" data-nav data-act="swap-pad" data-swap-pad hidden><span data-i18n="menu.swapPad"></span></button>
           <button class="btn" data-nav data-act="settings"><span data-i18n="menu.settings"></span></button>
           <button class="btn" data-nav data-act="quit"><span data-i18n="menu.quit"></span></button>
         </nav><p class="pad-status" data-pad-status hidden></p></div></section>`),
@@ -187,7 +202,7 @@ export class Ui {
     this.mapCanvas = this.q('hud', '[data-minimap]') as HTMLCanvasElement
     this.buildCards()
     this.buildSettings()
-    this.updateLocalToggle()
+    this.updatePlayersBtn()
     this.relabel()
   }
 
@@ -227,35 +242,26 @@ export class Ui {
         break
       case 'start':
         this.audio.play('go')
-        this.actions.startRace(this.selected, this.localTwoPlayer ? this.secondSelected : undefined)
+        if (this.playerCount === 1) this.actions.startRace([this.selected], [])
+        else {
+          this.lobby = []
+          this.show('lobby')
+        }
         break
       case 'pick':
         this.pick(el.dataset.id!)
         break
-      case 'toggle-local':
-        this.localTwoPlayer = !this.localTwoPlayer
-        if (this.secondSelected === this.selected) this.secondSelected = ROSTER.find(c => c.id !== this.selected)?.id ?? 'hedgehog'
-        this.updateLocalToggle()
+      case 'players':
+        this.playerCount = (this.playerCount % MAX_PLAYERS) + 1
+        this.updatePlayersBtn()
         this.audio.play('uiSelect')
         break
-      case 'cycle-p2': {
-        // Player 2 steps through the roster, skipping Player 1's racer.
-        const i = ROSTER.findIndex(c => c.id === this.secondSelected)
-        for (let k = 1; k <= ROSTER.length; k += 1) {
-          const next = ROSTER[(i + k) % ROSTER.length]
-          if (next.id !== this.selected) {
-            this.secondSelected = next.id
-            break
-          }
-        }
-        this.updateLocalToggle()
-        this.audio.play('uiMove')
+      case 'lobby-prev':
+      case 'lobby-next':
+        this.cycleLobby(Number(el.dataset.slot) - 1, name === 'lobby-next' ? 1 : -1)
         break
-      }
-      case 'swap-pad':
-        this.input.padSwap = !this.input.padSwap
-        this.audio.play('uiSelect')
-        this.refreshPadStatus()
+      case 'lobby-go':
+        this.startLobby()
         break
       case 'resume':
         this.audio.play(sfx)
@@ -304,6 +310,9 @@ export class Ui {
       case 'select':
         this.actions.backToTitle()
         break
+      case 'lobby':
+        this.show('select')
+        break
       case 'pause':
         this.actions.resume()
         break
@@ -316,6 +325,7 @@ export class Ui {
     document.body.dataset.screen = screen
     if (screen === 'title') this.refreshTitle()
     if (screen === 'pause') this.refreshPadStatus()
+    if (screen === 'lobby') this.renderLobby()
     if (screen === 'settings') this.refreshSettings()
     if (screen === 'select') this.pick(this.selected, true)
     if (screen === 'hud') {
@@ -358,7 +368,7 @@ export class Ui {
     document.title = `${this.t('game.title')} · SENAI Pompéia`
     this.buildCards()
     this.buildSettings()
-    this.updateLocalToggle()
+    this.updatePlayersBtn()
     this.refreshTitle()
     if (this.screen === 'select') this.pick(this.selected, true)
     if (this.screen === 'leaderboard') this.renderBoard()
@@ -367,37 +377,130 @@ export class Ui {
     this.hintKey !== 'none' && this.hint(this.hintKey)
   }
 
-  private updateLocalToggle(): void {
-    const scr = this.screens.get('select')
-    const el = scr?.querySelector<HTMLElement>('[data-local-toggle]')
-    if (el) {
-      el.textContent = this.localTwoPlayer ? this.t('select.twoPlayers') : this.t('select.onePlayer')
-      el.classList.toggle('on', this.localTwoPlayer)
-    }
-    const p2 = scr?.querySelector<HTMLElement>('[data-p2]')
-    if (p2) {
-      const c = characterById(this.secondSelected)
-      p2.hidden = !this.localTwoPlayer
-      p2.style.setProperty('--c', c.ui)
-      p2.innerHTML = `${this.avatar(c.id)}<span>${esc(this.t('select.p2', { name: this.t(`char.${c.id}.name`) }))}</span><b aria-hidden="true">▶</b>`
-    }
-    scr?.querySelectorAll<HTMLElement>('.card').forEach(card => card.classList.toggle('p2', this.localTwoPlayer && card.dataset.id === this.secondSelected))
+  private updatePlayersBtn(): void {
+    const el = this.screens.get('select')?.querySelector<HTMLElement>('[data-players-btn]')
+    if (!el) return
+    el.textContent = this.playerCount === 1 ? this.t('select.players1') : this.t('select.playersN', { n: this.playerCount })
+    el.classList.toggle('on', this.playerCount > 1)
   }
 
-  /** Pause menu, split screen only: what the game sees and who each gamepad drives. */
+  /** Pause menu, split screen only: who drives with what. */
   private refreshPadStatus(): void {
-    const split = document.body.classList.contains('local-split')
-    const btn = this.q('pause', '[data-swap-pad]')
     const status = this.q('pause', '[data-pad-status]')
-    btn.hidden = !split
+    const split = this.raceDevices.length > 1 && document.body.classList.contains('local-split')
     status.hidden = !split
     if (!split) return
-    const device = (slot: PlayerSlot) => this.t(this.input.hasPad(slot) ? 'pads.padKeys' : 'pads.keys')
-    status.innerHTML = [
-      esc(this.t('pads.count', { n: this.input.connectedPadCount })),
-      `<span class="ptag ptag-1">${esc(this.t('hud.p1'))}</span> ${esc(device(1))}`,
-      `<span class="ptag ptag-2">${esc(this.t('hud.p2'))}</span> ${esc(device(2))}`,
-    ].join('<br>')
+    status.innerHTML = this.raceDevices
+      .map((d, i) => `<span class="ptag ptag-${i + 1}">${esc(this.t(`hud.p${i + 1}`))}</span> ${esc(this.deviceName(d))}`)
+      .concat(esc(this.t('pads.count', { n: this.input.padCount })))
+      .join('<br>')
+  }
+
+  private deviceName(d: Device): string {
+    return d.kind === 'pad' ? this.t('dev.pad', { n: d.index + 1 }) : this.t(`dev.keys${d.set}`)
+  }
+
+  // ─── lobby (split screen join) ───────────────────────────────────
+
+  /** First racer nobody in the lobby has, starting from `from`. */
+  private freeRacer(from: string, skip = -1): string {
+    const taken = new Set(this.lobby.filter((_, i) => i !== skip).map(p => p.character))
+    const start = Math.max(0, ROSTER.findIndex(c => c.id === from))
+    for (let k = 0; k < ROSTER.length; k += 1) {
+      const c = ROSTER[(start + k) % ROSTER.length]
+      if (!taken.has(c.id)) return c.id
+    }
+    return from
+  }
+
+  private cycleLobby(i: number, dir: 1 | -1): void {
+    const p = this.lobby[i]
+    if (!p) return
+    const taken = new Set(this.lobby.filter((_, k) => k !== i).map(o => o.character))
+    let idx = ROSTER.findIndex(c => c.id === p.character)
+    for (let k = 0; k < ROSTER.length; k += 1) {
+      idx = (idx + dir + ROSTER.length) % ROSTER.length
+      if (!taken.has(ROSTER[idx].id)) break
+    }
+    p.character = ROSTER[idx].id
+    if (i === 0) this.actions.selectChanged(p.character)
+    this.audio.play('uiMove')
+    this.renderLobby()
+  }
+
+  private startLobby(): void {
+    if (this.lobby.length < this.playerCount) return
+    this.audio.play('go')
+    this.raceDevices = this.lobby.map(p => p.device)
+    this.selected = this.lobby[0].character
+    this.actions.startRace(
+      this.lobby.map(p => p.character),
+      this.lobby.map(p => p.device),
+    )
+  }
+
+  /** Each player joins with their own device: GAS on a keyboard zone or A on a gamepad. */
+  private lobbyFrame(): void {
+    let changed = false
+    for (const e of this.input.takeEdges()) {
+      const i = this.lobby.findIndex(p => sameDevice(p.device, e.device))
+      if (i < 0) {
+        if (e.action === 'join' && this.lobby.length < this.playerCount) {
+          const first = this.lobby.length === 0
+          this.lobby.push({ device: e.device, character: this.freeRacer(first ? this.selected : ROSTER[this.lobby.length % ROSTER.length].id) })
+          this.audio.play('uiSelect')
+          changed = true
+        } else if (e.action === 'back' && e.device.kind === 'pad' && this.lobby.length === 0) {
+          this.show('select')
+          return
+        }
+        continue
+      }
+      if (e.action === 'left' || e.action === 'right') this.cycleLobby(i, e.action === 'right' ? 1 : -1)
+      else if (e.action === 'back') {
+        this.lobby.splice(i, 1)
+        this.audio.play('uiBack')
+        changed = true
+      } else if (e.action === 'go' && this.lobby.length === this.playerCount) return this.startLobby()
+    }
+    // A gamepad that was unplugged leaves its seat.
+    const kept = this.lobby.filter(p => p.device.kind === 'keys' || this.input.padConnected(p.device.index))
+    if (kept.length !== this.lobby.length) {
+      this.lobby = kept
+      changed = true
+    }
+    if (changed) this.renderLobby()
+  }
+
+  private renderLobby(): void {
+    const scr = this.screens.get('lobby')!
+    const join = [0, 1, 2, 3].map(k => keyCap(KEY_SETS[k as 0].caps.accelerate, KEY_SETS[k as 0].caps.accelerate.length > 1)).join(' ')
+    this.q('lobby', '[data-lobby-help]').innerHTML = this.t('lobby.help', { keys: join, a: PAD_GLYPH.A })
+    const slots: string[] = []
+    for (let i = 0; i < this.playerCount; i += 1) {
+      const p = this.lobby[i]
+      const tag = `<span class="ptag ptag-${i + 1}">${esc(this.t(`hud.p${i + 1}`))}</span>`
+      if (!p) {
+        slots.push(`<div class="lobby-slot">${tag}<div class="lobby-wait">${esc(this.t('lobby.join'))}</div></div>`)
+        continue
+      }
+      const c = characterById(p.character)
+      const img = this.portraits.get(c.id)
+      slots.push(`<div class="lobby-slot on" style="--c:${c.ui}">${tag}
+        <span class="lobby-art">${img ? `<img src="${img}" alt="">` : ''}</span>
+        <div class="lobby-pick">
+          <button class="lobby-arrow" data-act="lobby-prev" data-slot="${i + 1}" aria-label="previous">◀</button>
+          <b>${esc(this.t(`char.${c.id}.name`))}</b>
+          <button class="lobby-arrow" data-act="lobby-next" data-slot="${i + 1}" aria-label="next">▶</button>
+        </div>
+        <span class="lobby-dev">${esc(this.deviceName(p.device))}</span>
+      </div>`)
+    }
+    this.q('lobby', '[data-lobby-slots]').innerHTML = slots.join('')
+    scr.querySelector<HTMLElement>('.lobby-slots')!.style.setProperty('--n', String(this.playerCount))
+    const missing = this.playerCount - this.lobby.length
+    this.q('lobby', '[data-lobby-status]').innerHTML = missing > 0 ? esc(this.t('lobby.waiting', { n: missing })) : this.t('lobby.ready', { x: PAD_GLYPH.X })
+    ;(this.q('lobby', '[data-lobby-go]') as HTMLButtonElement).disabled = missing > 0
   }
 
   private refreshTitle(): void {
@@ -445,8 +548,6 @@ export class Ui {
       ${bar('stat.speed', c.stats.speed)}${bar('stat.accel', c.stats.accel)}${bar('stat.handling', c.stats.handling)}${bar('stat.weight', c.stats.weight)}`
     this.save.update({ character: id })
     this.actions.selectChanged(id)
-    if (this.secondSelected === id) this.secondSelected = ROSTER.find(o => o.id !== id)?.id ?? 'hedgehog'
-    this.updateLocalToggle()
   }
 
   // ─── settings ────────────────────────────────────────────────────
@@ -680,8 +781,9 @@ export class Ui {
         retrigger(itemSlot, 'pop')
         name.textContent = this.t(`item.${s.item}`)
       }
-      const cap = s.twoPlayer ? keyCap(slot === 1 ? 'Space' : 'Enter', true) : this.input.method === 'gamepad' ? PAD_GLYPH.X : keyCap('Space', true)
-      key.innerHTML = this.input.method === 'touch' && !s.twoPlayer ? '' : this.t('hud.useItem', { key: cap })
+      const d = s.device
+      const cap = d ? (d.kind === 'pad' ? PAD_GLYPH.X : keyCap(KEY_SETS[d.set].caps.item, KEY_SETS[d.set].caps.item.length > 1)) : this.input.method === 'gamepad' ? PAD_GLYPH.X : keyCap('Space', true)
+      key.innerHTML = this.input.method === 'touch' && !s.split ? '' : this.t('hud.useItem', { key: cap })
     } else if (itemSlot.dataset.item || itemSlot.classList.contains('ready') || itemSlot.classList.contains('rolling')) {
       icon.innerHTML = ''
       itemSlot.className = 'itemslot'
@@ -710,13 +812,10 @@ export class Ui {
       if (v.toastTimer <= 0) q('[data-toast]').classList.remove('on')
     }
     q('').classList.toggle('done', s.finished)
-    // Split screen: show which player the gamepad is driving right now.
+    // Split screen: each tag names that player's controls.
     const dev = q('[data-dev]')
-    const usesPad = s.twoPlayer && this.input.hasPad(slot)
-    if (dev.dataset.on !== String(usesPad)) {
-      dev.dataset.on = String(usesPad)
-      dev.textContent = usesPad ? ` · ${this.t('pads.short')}` : ''
-    }
+    const label = s.device ? ` · ${s.device.kind === 'pad' ? `🎮${s.device.index + 1}` : SHORT_KEYS[s.device.set]}` : ''
+    if (dev.textContent !== label) dev.textContent = label
     if (slot !== 1) return
     // Shared overlays (one per screen): controls card, skip button, minimap.
     const tut = this.q('hud', '[data-tutorial]')
@@ -783,7 +882,7 @@ export class Ui {
       g.fillStyle = d.color
       g.fill()
       g.lineWidth = d.me ? 3.5 : 2.5
-      g.strokeStyle = d.me ? (s.twoPlayer ? PLAYER_COLORS[d.slot as PlayerSlot] : '#ffffff') : '#2b1633'
+      g.strokeStyle = d.me ? (s.split ? PLAYER_COLORS[d.slot as PlayerSlot] : '#ffffff') : '#2b1633'
       g.stroke()
     }
   }
@@ -857,21 +956,30 @@ export class Ui {
   }
 
   /** First-run control card shown during the flyover/countdown. */
-  showTutorial(on: boolean, twoPlayer = false): void {
+  showTutorial(on: boolean, devices?: Device[]): void {
     this.tutorialShown = on
+    this.raceDevices = devices ?? []
     if (!on) return
-    if (twoPlayer) {
-      // One keyboard, two drivers: left hand = P1, right hand = P2 (a gamepad also works for P2).
-      const rows: [string, string, string][] = [
-        ['tutorial.steer', `${keyCap('A')}${keyCap('D')}`, `${keyCap('←')}${keyCap('→')}`],
-        ['tutorial.gas', keyCap('W'), keyCap('↑')],
-        ['tutorial.brake', keyCap('S'), keyCap('↓')],
-        ['tutorial.drift', keyCap('Shift', true), keyCap('Shift', true)],
-        ['tutorial.item', keyCap('Space', true), keyCap('Enter', true)],
-        ['tutorial.lookBack', keyCap('C'), keyCap('.')],
-        ['tutorial.pause', keyCap('Esc', true), keyCap('Esc', true)],
+    if (devices && devices.length > 1) {
+      // One column per local player, showing exactly their own controls.
+      const col = (d: Device, row: 'steer' | 'gas' | 'brake' | 'drift' | 'item' | 'look') => {
+        if (d.kind === 'pad') return { steer: PAD_GLYPH.LS, gas: `${PAD_GLYPH.A}`, brake: PAD_GLYPH.B, drift: PAD_GLYPH.RB, item: PAD_GLYPH.X, look: keyCap('R3') }[row]
+        const c = KEY_SETS[d.set].caps
+        const cap = (v: string) => keyCap(v, v.length > 1)
+        return { steer: `${cap(c.left)}${cap(c.right)}`, gas: cap(c.accelerate), brake: cap(c.brake), drift: cap(c.drift), item: cap(c.item), look: cap(c.lookBack) }[row]
+      }
+      const rows: [string, 'steer' | 'gas' | 'brake' | 'drift' | 'item' | 'look'][] = [
+        ['tutorial.steer', 'steer'],
+        ['tutorial.gas', 'gas'],
+        ['tutorial.brake', 'brake'],
+        ['tutorial.drift', 'drift'],
+        ['tutorial.item', 'item'],
+        ['tutorial.lookBack', 'look'],
       ]
-      this.q('hud', '[data-tutorial]').innerHTML = `<h3 class="panel-title">${esc(this.t('tutorial.title'))}</h3><ul class="two"><li class="head"><span></span><span class="ptag ptag-1">${esc(this.t('hud.p1'))}</span><span class="ptag ptag-2">${esc(this.t('hud.p2'))}</span></li>${rows.map(([k, a, b]) => `<li><span>${esc(this.t(k))}</span><span class="keys">${a}</span><span class="keys">${b}</span></li>`).join('')}</ul><p class="tip">${esc(this.t(`tutorial.pads${Math.min(2, this.input.padCount)}`))}</p>`
+      const head = devices.map((_, i) => `<span class="ptag ptag-${i + 1}">${esc(this.t(`hud.p${i + 1}`))}</span>`).join('')
+      this.q('hud', '[data-tutorial]').innerHTML = `<h3 class="panel-title">${esc(this.t('tutorial.title'))}</h3><ul class="multi" style="--cols:${devices.length}"><li class="head"><span></span>${head}</li>${rows
+        .map(([k, row]) => `<li><span>${esc(this.t(k))}</span>${devices.map(d => `<span class="keys">${col(d, row)}</span>`).join('')}</li>`)
+        .join('')}</ul><p class="tip">${esc(this.t('tutorial.multiTip'))}</p>`
       return
     }
     const m = this.input.method
@@ -931,6 +1039,7 @@ export class Ui {
   frame(dt: number): void {
     this.navCooldown -= dt
     if (this.screen === 'hud' || this.screen === 'boot') return
+    if (this.screen === 'lobby') return this.lobbyFrame()
     const m = this.input.move
     if (Math.abs(m.x) < 0.5 && Math.abs(m.y) < 0.5) this.navCooldown = Math.min(this.navCooldown, 0)
     if (this.navCooldown <= 0 && this.input.method === 'gamepad') {
@@ -962,6 +1071,11 @@ export class Ui {
       if (this.screen === 'pause') return // main handles pause toggle
       e.preventDefault()
       this.back()
+      return
+    }
+    // In the lobby every key belongs to someone's driving zone; menu shortcuts stay off.
+    if (this.screen === 'lobby') {
+      if (e.code === 'Enter' || e.code === 'Space' || e.code === 'NumpadEnter') e.preventDefault()
       return
     }
     if (typing) return
@@ -1027,7 +1141,8 @@ export class Ui {
 }
 
 /** Outline colours that mark P1 / P2 on the minimap (match the .ptag badges). */
-const PLAYER_COLORS: Record<PlayerSlot, string> = { 1: '#ffd23f', 2: '#62d8ff' }
+const PLAYER_COLORS: Record<PlayerSlot, string> = { 1: '#ffd23f', 2: '#62d8ff', 3: '#ff7aa2', 4: '#7ee06e' }
+const SHORT_KEYS = ['WASD', '↑←↓→', 'IJKL', 'NUM']
 
 function fmtRange(key: keyof SaveData, v: number): string {
   return key === 'sensitivity' ? `${v.toFixed(1)}×` : `${Math.round(v * 100)}%`

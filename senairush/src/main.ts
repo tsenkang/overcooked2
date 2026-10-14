@@ -1,7 +1,7 @@
 import './styles/main.css'
 import { Audio } from './engine/audio'
 import { I18n, resolveLocale } from './engine/i18n'
-import { Input } from './engine/input'
+import { Input, type Device } from './engine/input'
 import { GameLoop } from './engine/loop'
 import { SAVE_KEY, SaveStore, type SaveData } from './engine/save'
 import type { Game } from './game/game'
@@ -16,9 +16,9 @@ async function boot(): Promise<void> {
   const input = new Input()
   const audio = new Audio()
   let game: Game | undefined
-  let lastCharacter = save.data.character
-  /** Player 2's racer for the last local split-screen race (undefined = solo). */
-  let lastSecond: string | undefined
+  /** Last race's local players (racer per slot) and their devices, for Restart / Race again. */
+  let lastRacers: string[] = [save.data.character]
+  let lastDevices: Device[] = []
 
   const applySettings = (d: SaveData) => {
     audio.setVolumes(d.musicVolume, d.sfxVolume, d.muted)
@@ -29,18 +29,19 @@ async function boot(): Promise<void> {
     }
   }
 
-  const beginRace = (id: string, secondId?: string) => {
+  const beginRace = (racers: string[], devices: Device[] = []) => {
     if (!game) return
     audio.unlock()
-    lastCharacter = id
-    lastSecond = secondId
-    save.update({ character: id })
+    lastRacers = racers
+    lastDevices = devices
+    save.update({ character: racers[0] })
+    const split = racers.length > 1
     const tutorial = !save.data.tutorialDone
     ui.resetHud()
-    // Split screen always opens with both players' key maps.
-    ui.showTutorial(tutorial || !!secondId, !!secondId)
-    game.startRace(id, tutorial, secondId)
-    if (tutorial && !secondId) save.update({ tutorialDone: true })
+    // Split screen always opens with every player's controls.
+    ui.showTutorial(tutorial || split, split ? devices.slice(0, racers.length) : undefined)
+    game.startRace(racers, tutorial, devices)
+    if (tutorial && !split) save.update({ tutorialDone: true })
     ui.show('hud')
     input.clearPresses()
     loop.resetAccumulator()
@@ -70,15 +71,15 @@ async function boot(): Promise<void> {
       ui.show('select')
     },
     selectChanged: id => game?.showSelect(id),
-    startRace: (id, secondId) => beginRace(id, secondId),
+    startRace: (racers, devices) => beginRace(racers, devices),
     backToTitle: toTitle,
     resume,
-    restart: () => beginRace(lastCharacter, lastSecond),
+    restart: () => beginRace(lastRacers, lastDevices),
     quit: toTitle,
-    again: () => beginRace(lastCharacter, lastSecond),
+    again: () => beginRace(lastRacers, lastDevices),
     change: () => {
       game?.toTitle()
-      game?.showSelect(lastCharacter)
+      game?.showSelect(lastRacers[0])
       ui.show('select')
     },
     skipIntro: () => game?.skipIntro(),
@@ -155,8 +156,8 @@ async function boot(): Promise<void> {
       loop.paused = g.mode === 'paused'
       g.render(alpha, frameSeconds)
       if (ui.screen === 'hud' && g.player) {
-        ui.updateHud(g.hud(1), frameSeconds)
-        if (g.twoPlayer) ui.updateHud(g.hud(2), frameSeconds)
+        const players = g.split ? g.humans().length : 1
+        for (let slot = 1; slot <= players; slot += 1) ui.updateHud(g.hud(slot as 1 | 2 | 3 | 4), frameSeconds)
       }
       // Presses are consumed inside fixed steps; drop leftovers once a step had the chance.
       if (stepped) {
