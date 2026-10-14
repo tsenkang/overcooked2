@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 2,
+  "title": "SENAI Rush: Critter Circuit",
+  "description": "Uma corrida arcade 3D pelo campus SENAI Pompéia, com drift, boosts, power-ups e cinco rivais de IA.",
+  "defaultCaptions": {
+    "x": "SENAI Rush: Critter Circuit — drift, itens e rivalidade no campus SENAI Pompéia.",
+    "facebook": "Corra pelo SENAI Pompéia em SENAI Rush: Critter Circuit, um kart racer 3D com boosts, itens e cinco rivais.",
+    "reddit": "SENAI Rush: Critter Circuit é um kart racer 3D arcade com uma pista no SENAI Pompéia, drift com boost e power-ups.",
+    "discord": "SENAI Rush: Critter Circuit — uma corrida arcade 3D no SENAI Pompéia."
+  },
+  "assets": {
+    "og": "assets/share/og.png",
+    "favicon": "assets/share/favicon.png"
+  }
+}
