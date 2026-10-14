@@ -155,5 +155,6 @@
   "pads.short": "手柄",
   "pads.count": "检测到的手柄：{n}",
   "pads.keys": "键盘",
-  "pads.padKeys": "手柄 + 键盘"
+  "pads.padKeys": "手柄 + 键盘",
+  "toast.squashed": "被冲压机压扁了！"
 }

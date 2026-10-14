@@ -13,8 +13,14 @@ import { CONFIG } from './config'
 export const MAIN_POINTS: [number, number, number][] = [
   [-40, 0, 0], [30, 0, 0], [75, -10, 0], [98, -45, 0.5], [95, -90, 1], [70, -118, 1], [35, -120, 1], [12, -100, 1.5], [10, -70, 2],
   [-10, -48, 2.5], [-40, -45, 3], [-62, -65, 5], [-72, -100, 7.5], [-80, -140, 4], [-100, -165, 1.5], [-135, -165, 1], [-155, -135, 1],
-  [-150, -90, 0.5], [-128, -45, 0], [-100, -8, 0],
+  [-150, -90, 0.5], [-128, -45, 0],
+  // North loop: hill climb → plateau jump → high bridge over the lake → chicane → workshop tunnel
+  // with the stamping presses → wide U-turn back onto the start straight.
+  [-145, -5, 1], [-150, 35, 3], [-130, 70, 6], [-95, 95, 9], [-50, 105, 10], [-5, 100, 8], [33, 90, 6], [54, 68, 4.5], [46, 46, 3.8],
+  [18, 38, 3], [-15, 42, 2], [-60, 48, 1], [-92, 47, 0.6], [-110, 38, 0.4], [-115, 22, 0.2], [-106, 7, 0], [-88, 1, 0],
 ]
+/** Lake under the north bridge (world XZ, radius); scenery carves and fills it. */
+export const BRIDGE_LAKE = { x: 14, z: 96, r: 19 }
 /** Shortcut: leaves the inside of the east sweep and rejoins before the south hairpin. */
 export const SHORTCUT = { from: [84, -22] as const, via: [[74, -50, 0.4], [69, -82, 0.8]] as [number, number, number][], to: [55, -110] as const }
 
@@ -27,6 +33,8 @@ export const SHORT_WALL = SHORT_HALF + 0.9
 export type PathId = 'main' | 'short'
 export type Pad = { path: PathId; s: number; lateral: number; length: number; width: number }
 export type Ramp = { s: number; length: number; width: number; lip: number }
+/** Workshop stamping press: slams onto the road on a cycle and squashes whoever is under it. */
+export type Press = { s: number; lateral: number; size: number; period: number; phase: number }
 export type ItemSpot = { pos: THREE.Vector3; path: PathId; mainS: number }
 
 export type Loc = {
@@ -64,6 +72,12 @@ export class Track {
   readonly pads: Pad[] = []
   readonly ramps: Ramp[] = []
   readonly itemSpots: ItemSpot[] = []
+  readonly presses: Press[] = []
+  /** Main-loop s-range carried by the bridge (no ground underneath). */
+  readonly bridge: { from: number; to: number }
+  /** Main-loop s-range under the workshop roof. */
+  readonly tunnel: { from: number; to: number }
+  private readonly pressViews: { head: THREE.Object3D; rod: THREE.Mesh; shadow: THREE.Mesh; top: number }[] = []
   /** Shortcut s-range (fraction of its length) covered with a slick workshop-floor detour. */
   readonly fluff = { from: 0.36, to: 0.7 }
   readonly shortMap: { start: number; end: number }
@@ -104,6 +118,25 @@ export class Track {
     this.pads.push({ path: 'main', s: sAt(10, -78), lateral: -3, length: 5, width: 4.5 })
     this.pads.push({ path: 'main', s: sAt(-150, -96), lateral: 3.5, length: 5, width: 4.5 })
     this.pads.push({ path: 'short', s: this.short.length * 0.25, lateral: 0, length: 5, width: 5 })
+    // North loop features.
+    this.pads.push({ path: 'main', s: sAt(-149, 15), lateral: -3, length: 5, width: 4.5 })
+    this.pads.push({ path: 'main', s: sAt(-140, 55), lateral: 3, length: 5, width: 4.5 })
+    const plateau = sAt(-62, 104)
+    this.ramps.push({ s: plateau + 6, length: 9, width: 8, lip: 1.6 })
+    this.pads.push({ path: 'main', s: plateau - 2, lateral: 0, length: 5, width: 6 })
+    const mid = this.main.closest(new THREE.Vector3(BRIDGE_LAKE.x, 0, BRIDGE_LAKE.z)).s
+    this.bridge = { from: mid - 27, to: mid + 27 }
+    this.pads.push({ path: 'main', s: mid, lateral: 0, length: 5, width: 5 })
+    const t0 = sAt(-17, 42)
+    const t1 = sAt(-58, 48)
+    this.tunnel = { from: t0, to: t1 }
+    const span = t1 - t0
+    ;[
+      { f: 0.25, lateral: -3.6, phase: 0 },
+      { f: 0.5, lateral: 3.6, phase: 0.33 },
+      { f: 0.75, lateral: 0, phase: 0.66 },
+    ].forEach(p => this.presses.push({ s: t0 + span * p.f, lateral: p.lateral, size: 5.2, period: 3.2, phase: p.phase }))
+    this.pads.push({ path: 'main', s: t1 + 6, lateral: 0, length: 5, width: 5 })
 
     const row = (s: number, lats = [-5.4, -1.8, 1.8, 5.4]) => {
       for (const lat of lats) this.itemSpots.push({ pos: this.main.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'main', mainS: this.main.wrap(s) })
@@ -111,6 +144,9 @@ export class Track {
     row(sAt(12, 0))
     row(sAt(-30, -44))
     row(sAt(-152, -118))
+    row(sAt(-122, 79))
+    row(sAt(30, 39))
+    row(sAt(-112, 30))
     for (const lat of [-1.6, 1.6]) {
       const s = this.short.length * 0.83
       this.itemSpots.push({ pos: this.short.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'short', mainS: this.mapShort(s) })
@@ -121,6 +157,8 @@ export class Track {
     this.buildWalls()
     this.buildPads()
     this.buildRamps()
+    this.buildBridge()
+    this.buildWorkshop()
     this.buildStartLine()
     const archS = crest - 10
     this.landmarks = { arch: this.main.pointAt(archS), archYaw: this.main.yawAt(archS), ramp: this.main.pointAt(this.ramps[0].s) }
@@ -213,6 +251,55 @@ export class Track {
   updateVisuals(time: number): void {
     this.chevron.offset.y = -time * 1.6
     for (const m of this.padMeshes) (m.material as THREE.MeshBasicMaterial).color.setScalar(0.85 + Math.sin(time * 8) * 0.15)
+    this.presses.forEach((p, i) => {
+      const v = this.pressViews[i]
+      const lift = this.pressLift(p, time)
+      // Telegraph: a shiver just before it drops.
+      const t = this.pressCycle(p, time)
+      const shake = t > 0.42 && t < 0.55 ? Math.sin(time * 70) * 0.12 : 0
+      v.head.position.y = 0.75 + lift * (v.top - 2.6) + shake
+      v.rod.scale.y = Math.max(0.05, v.top - v.head.position.y)
+      v.rod.position.y = v.head.position.y + v.rod.scale.y / 2
+      const m = v.shadow.material as THREE.MeshBasicMaterial
+      m.opacity = 0.15 + (1 - lift) * 0.45
+      v.shadow.scale.setScalar(0.75 + (1 - lift) * 0.35)
+    })
+  }
+
+  // ─── stamping presses ───────────────────────────────────────────────
+
+  private pressCycle(p: Press, time: number): number {
+    const t = time / p.period + p.phase
+    return t - Math.floor(t)
+  }
+
+  /** 1 = parked at the top, 0 = slammed on the road. */
+  pressLift(p: Press, time: number): number {
+    const t = this.pressCycle(p, time)
+    if (t < 0.55) return 1
+    if (t < 0.63) return 1 - Math.pow((t - 0.55) / 0.08, 2)
+    if (t < 0.8) return 0
+    return THREE.MathUtils.smoothstep(t, 0.8, 1)
+  }
+
+  /** The press currently crushing this spot, if any. */
+  pressAt(loc: Loc, time: number): Press | null {
+    if (loc.path !== 'main') return null
+    for (const p of this.presses) {
+      const reach = p.size / 2 + 0.55
+      if (Math.abs(this.main.delta(p.s, loc.s)) < reach && Math.abs(loc.lateral - p.lateral) < reach && this.pressLift(p, time) < 0.22) return p
+    }
+    return null
+  }
+
+  /** Presses that are down or about to drop, for the AI to steer around. */
+  pressObstacles(time: number): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
+    const out: { position: THREE.Vector3; radius: number; hazard: boolean }[] = []
+    for (const p of this.presses) {
+      const t = this.pressCycle(p, time)
+      if (t > 0.35 && t < 0.85) out.push({ position: this.main.pointAt(p.s, p.lateral), radius: p.size / 2 + 0.8, hazard: true })
+    }
+    return out
   }
 
   // ─── geometry ─────────────────────────────────────────────────────────
@@ -459,6 +546,121 @@ export class Track {
     }
   }
 
+  /** Deck slab, piers and lamp posts for the high bridge over the north lake. */
+  private buildBridge(): void {
+    const { from, to } = this.bridge
+    const deckMat = new THREE.MeshStandardMaterial({ color: '#8fa3b3', flatShading: true, roughness: 0.8 })
+    const pierMat = new THREE.MeshStandardMaterial({ color: '#dbe7f2', flatShading: true, roughness: 0.7 })
+    const beamMat = new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.5 })
+    const width = (WALL + 1) * 2
+    for (let s = from - 4; s < to + 4; s += 3) {
+      const smp = this.main.at(s)
+      const slab = new THREE.Mesh(new THREE.BoxGeometry(width, 1.1, 3.25), deckMat)
+      slab.position.copy(smp.pos).setY(smp.pos.y - 0.62)
+      slab.rotation.y = Math.atan2(smp.tan.x, smp.tan.z)
+      slab.castShadow = slab.receiveShadow = true
+      this.group.add(slab)
+      // Red fascia beam along both edges.
+      for (const side of [-1, 1]) {
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 3.25), beamMat)
+        beam.position.copy(smp.pos).addScaledVector(smp.right, side * (WALL + 0.9)).setY(smp.pos.y - 0.5)
+        beam.rotation.y = slab.rotation.y
+        this.group.add(beam)
+      }
+    }
+    for (let s = from + 6; s < to - 3; s += 12) {
+      const smp = this.main.at(s)
+      for (const side of [-1, 1]) {
+        const top = smp.pos.y - 1.1
+        const h = top + 3.5
+        const pier = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 1.1, h, 8), pierMat)
+        pier.position.copy(smp.pos).addScaledVector(smp.right, side * (HALF_WIDTH - 1)).setY(top - h / 2)
+        pier.castShadow = true
+        this.group.add(pier)
+      }
+      // Lamp posts on the parapets.
+      for (const side of [-1, 1]) {
+        const base = smp.pos.clone().addScaledVector(smp.right, side * (WALL + 0.9))
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 4.2, 6), pierMat)
+        pole.position.copy(base).setY(base.y + 2.1)
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 6), new THREE.MeshBasicMaterial({ color: '#fff3c4', toneMapped: false }))
+        lamp.position.copy(base).setY(base.y + 4.3)
+        this.group.add(pole, lamp)
+      }
+    }
+  }
+
+  /** SENAI workshop hall over the road, with three stamping presses hanging from its gantries. */
+  private buildWorkshop(): void {
+    const { from, to } = this.tunnel
+    const frameMat = new THREE.MeshStandardMaterial({ color: '#1e4d6b', flatShading: true, roughness: 0.55 })
+    const roofMat = new THREE.MeshStandardMaterial({ color: '#dce6eb', flatShading: true, roughness: 0.8, side: THREE.DoubleSide })
+    const lightMat = new THREE.MeshBasicMaterial({ color: '#fff6d8', toneMapped: false })
+    const H = 8.5
+    const reach = WALL + 1.2
+    for (let s = from - 3; s <= to + 3; s += 6) {
+      const smp = this.main.at(s)
+      const yaw = Math.atan2(smp.tan.x, smp.tan.z)
+      for (const side of [-1, 1]) {
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.9, H, 0.9), frameMat)
+        post.position.copy(smp.pos).addScaledVector(smp.right, side * reach).setY(smp.pos.y + H / 2)
+        post.rotation.y = yaw
+        post.castShadow = true
+        this.group.add(post)
+      }
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(reach * 2 + 0.9, 0.8, 0.9), frameMat)
+      beam.position.copy(smp.pos).setY(smp.pos.y + H)
+      beam.rotation.y = yaw
+      beam.castShadow = true
+      const lamp = new THREE.Mesh(new THREE.BoxGeometry(5, 0.15, 0.5), lightMat)
+      lamp.position.copy(smp.pos).setY(smp.pos.y + H - 0.5)
+      lamp.rotation.y = yaw
+      this.group.add(beam, lamp)
+      // Sawtooth roof panel to the next frame, with a skylight gap every other bay.
+      if (s + 6 <= to + 3 && Math.round((s - from) / 6) % 2 === 0) {
+        const next = this.main.at(s + 6)
+        const mid = smp.pos.clone().lerp(next.pos, 0.5)
+        const panel = new THREE.Mesh(new THREE.BoxGeometry(reach * 2 + 1.5, 0.3, 6.2), roofMat)
+        panel.position.copy(mid).setY(Math.max(smp.pos.y, next.pos.y) + H + 0.9)
+        panel.rotation.set(0.18, Math.atan2(next.pos.x - smp.pos.x, next.pos.z - smp.pos.z), 0, 'YXZ')
+        panel.castShadow = true
+        this.group.add(panel)
+      }
+    }
+    // Hall entrance signs.
+    for (const [s, flip] of [[from - 3, 0], [to + 3, Math.PI]] as const) {
+      const smp = this.main.at(s)
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(12, 1.6, 0.25), new THREE.MeshStandardMaterial({ map: labelTexture('OFICINA DE PRENSAS'), roughness: 0.6 }))
+      sign.position.copy(smp.pos).setY(smp.pos.y + H + 1.3)
+      sign.rotation.y = Math.atan2(smp.tan.x, smp.tan.z) + Math.PI + flip
+      this.group.add(sign)
+    }
+    // Presses.
+    const stripes = hazardTexture()
+    const headMat = new THREE.MeshStandardMaterial({ map: stripes, flatShading: true, roughness: 0.5 })
+    const plateMat = new THREE.MeshStandardMaterial({ color: '#4a5c6a', flatShading: true, roughness: 0.4, metalness: 0.3 })
+    const rodMat = new THREE.MeshStandardMaterial({ color: '#c3ced6', flatShading: true, roughness: 0.25, metalness: 0.6 })
+    for (const p of this.presses) {
+      const smp = this.main.at(p.s)
+      const g = new THREE.Group()
+      g.position.copy(this.main.pointAt(p.s, p.lateral))
+      g.rotation.y = Math.atan2(smp.tan.x, smp.tan.z)
+      const head = new THREE.Group()
+      const body = new THREE.Mesh(new THREE.BoxGeometry(p.size, 1.5, p.size), headMat)
+      body.castShadow = true
+      const plate = new THREE.Mesh(new THREE.BoxGeometry(p.size + 0.3, 0.3, p.size + 0.3), plateMat)
+      plate.position.y = -0.85
+      head.add(body, plate)
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1, 10), rodMat)
+      const shadow = new THREE.Mesh(new THREE.PlaneGeometry(p.size, p.size), new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: 0.2, depthWrite: false }))
+      shadow.rotation.x = -Math.PI / 2
+      shadow.position.y = 0.08
+      g.add(head, rod, shadow)
+      this.group.add(g)
+      this.pressViews.push({ head, rod, shadow, top: H - 0.4 })
+    }
+  }
+
   private buildStartLine(): void {
     const pos: number[] = []
     const col: number[] = []
@@ -567,6 +769,44 @@ function rail(pos: number[], col: number[], pa: THREE.Vector3, pb: THREE.Vector3
   // Low base plinth.
   quad(up(ia, -0.3), up(ib, -0.3), up(ia, h0), up(ib, h0), new THREE.Color('#f7e3ef'))
   quad(up(ia, h0), up(ib, h0), up(ia, -0.3), up(ib, -0.3), new THREE.Color('#f7e3ef'))
+}
+
+function hazardTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  g.fillStyle = '#ffc400'
+  g.fillRect(0, 0, 64, 64)
+  g.fillStyle = '#102a43'
+  for (let k = -64; k < 128; k += 22) {
+    g.beginPath()
+    g.moveTo(k, 0)
+    g.lineTo(k + 11, 0)
+    g.lineTo(k + 11 - 64, 64)
+    g.lineTo(k - 64, 64)
+    g.closePath()
+    g.fill()
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function labelTexture(text: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 512
+  c.height = 72
+  const g = c.getContext('2d')!
+  g.fillStyle = '#e30613'
+  g.fillRect(0, 0, 512, 72)
+  g.fillStyle = '#ffffff'
+  g.font = '900 42px sans-serif'
+  g.textAlign = 'center'
+  g.textBaseline = 'middle'
+  g.fillText(text, 256, 38)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
 }
 
 function chevronTexture(): THREE.CanvasTexture {

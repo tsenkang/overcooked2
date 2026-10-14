@@ -155,5 +155,6 @@
   "pads.short": "gamepad",
   "pads.count": "Gamepads detected: {n}",
   "pads.keys": "keyboard",
-  "pads.padKeys": "gamepad + keyboard"
+  "pads.padKeys": "gamepad + keyboard",
+  "toast.squashed": "Flattened by the press!"
 }

@@ -117,6 +117,8 @@ export class Game {
   private selectSnap = false
   private readonly showroomAt: THREE.Vector3
   private trick = new Map<Racer, number>()
+  /** Racers recently flattened by a workshop press (seconds of immunity left). */
+  private squashed = new Map<Racer, number>()
   private launched = new Set<Racer>()
   private resultsShown = false
   private runUnranked = false
@@ -175,6 +177,7 @@ export class Game {
     this.fx.clear()
     this.trick.clear()
     this.launched.clear()
+    this.squashed.clear()
   }
 
   private spawn(playerChar: Character | null, player2Char: Character | null = null): void {
@@ -354,7 +357,7 @@ export class Game {
     if (this.mode === 'playing' && this.phase === 'countdown') this.stepCountdown()
     if (racing) this.raceTime += dt
 
-    const obstacles = this.items.obstacles()
+    const obstacles = [...this.items.obstacles(), ...this.track.pressObstacles(this.time)]
     for (const r of this.racers) {
       if (r.respawnTime > 0) {
         r.respawnTime -= dt
@@ -405,6 +408,7 @@ export class Game {
         for (const e of events) this.onProgress(r, e.type, e.type === 'lap' ? e.lap : 0)
       }
       if (r.position.y < loc.height - 8 || loc.distance > WALL + 8) this.startRespawn(r)
+      this.checkPress(r, loc)
       this.handleEvents(r)
     }
     this.kartContacts()
@@ -688,6 +692,36 @@ export class Game {
           this.hooks.hurt('bee', this.slotOf(weak))
         }
       }
+  }
+
+  /** Workshop presses: get caught under one as it slams and you're flattened for a moment. */
+  private checkPress(r: Racer, loc: ReturnType<Track['locate']>): void {
+    const left = (this.squashed.get(r) ?? 0) - 1 / 60
+    if (left > 0) {
+      this.squashed.set(r, left)
+      return
+    }
+    this.squashed.delete(r)
+    if (r.respawnTime > 0 || !r.kart.grounded || !this.track.pressAt(loc, this.time)) return
+    this.squashed.set(r, 1.6)
+    if (r.shielded) {
+      r.shieldTime = 0
+      this.sfxAt('shieldPop', r.position)
+      if (r.isPlayer) this.hooks.hurt('blocked', this.slotOf(r))
+      return
+    }
+    r.kart.spinOut(1.1, 0.1)
+    r.bounce(3)
+    this.fx.ring(r.position, '#ffc400', 14, 7)
+    this.sfxAt('bump', r.position)
+    if (r.isPlayer) {
+      const slot = this.slotOf(r)
+      this.hooks.hurt('bee', slot)
+      this.hooks.toast('toast.squashed', {}, slot)
+      this.audio.play('hitMe')
+      this.camFor(r).addTrauma(0.7)
+      this.input.rumble(1, 0.7, 260, this.twoPlayer ? slot : undefined)
+    }
   }
 
   private onHit(victim: Racer, by: Racer | null, kind: 'bee' | 'taffy'): void {

@@ -3,7 +3,7 @@ import * as THREE from 'three'
 /** Non-indexed copy for per-face shading/colors (skips geometries that are already flat). */
 const flat = (g: THREE.BufferGeometry): THREE.BufferGeometry => (g.index ? g.toNonIndexed() : g)
 import { TOON } from './kartModel'
-import { SHORT_WALL, WALL, type Track } from './track'
+import { BRIDGE_LAKE, SHORT_WALL, WALL, type Track } from './track'
 
 /**
  * SENAI Pompéia campus scenery: gradient sky, warm key light that follows the camera, a flat-shaded
@@ -55,29 +55,36 @@ function fbm(x: number, z: number): number {
 const LAKES = [
   { x: -112, z: -108, r: 21 },
   { x: 47, z: -64, r: 10 },
-  { x: 60, z: 40, r: 26 },
+  { x: 92, z: 36, r: 22 },
+  BRIDGE_LAKE,
 ]
 
 /** Spatial hash of centre-line samples for fast "distance to the road" queries. */
 class RoadField {
-  private cells = new Map<string, { x: number; z: number; y: number; w: number }[]>()
+  private cells = new Map<string, { x: number; z: number; y: number; w: number; bridge: boolean }[]>()
   constructor(track: Track, private readonly size = 12) {
     for (const [sp, w] of [[track.main, WALL], [track.short, SHORT_WALL]] as const) {
       for (let i = 0; i < sp.samples.length; i += 2) {
-        const p = sp.samples[i].pos
+        const smp = sp.samples[i]
+        const p = smp.pos
+        const bridge = sp === track.main && smp.s > track.bridge.from && smp.s < track.bridge.to
         const k = `${Math.floor(p.x / size)},${Math.floor(p.z / size)}`
         let list = this.cells.get(k)
         if (!list) this.cells.set(k, (list = []))
-        list.push({ x: p.x, z: p.z, y: p.y, w })
+        list.push({ x: p.x, z: p.z, y: p.y, w, bridge })
       }
     }
   }
-  /** Distance beyond the wall line (negative = inside the road) and the road height there. */
-  query(x: number, z: number, reach = 3): { d: number; y: number } {
+  /**
+   * Distance beyond the wall line (negative = inside the road) and the road height there.
+   * `bridge` is true when the nearest road is the bridge deck, which has no embankment below.
+   */
+  query(x: number, z: number, reach = 3): { d: number; y: number; bridge: boolean } {
     const cx = Math.floor(x / this.size)
     const cz = Math.floor(z / this.size)
     let best = Infinity
     let y = 0
+    let bridge = false
     for (let i = -reach; i <= reach; i += 1)
       for (let j = -reach; j <= reach; j += 1) {
         const list = this.cells.get(`${cx + i},${cz + j}`)
@@ -87,10 +94,11 @@ class RoadField {
           if (d < best) {
             best = d
             y = p.y
+            bridge = p.bridge
           }
         }
       }
-    return { d: best, y }
+    return { d: best, y, bridge }
   }
 }
 
@@ -145,27 +153,28 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   scene.add(rim)
 
   // ── terrain ─────────────────────────────────────────────────
-  const X0 = -270
-  const X1 = 210
-  const Z0 = -280
-  const Z1 = 110
-  const cell = 3.4
+  // Bounds cover the whole circuit (south campus + north loop) plus the valley rim.
+  const X0 = -300
+  const X1 = 240
+  const Z0 = -310
+  const Z1 = 220
+  const cell = 3.6
   const nx = Math.ceil((X1 - X0) / cell)
   const nz = Math.ceil((Z1 - Z0) / cell)
   const heights = new Float32Array((nx + 1) * (nz + 1))
   const heightAt = (x: number, z: number) => {
     let h = fbm(x * 0.012, z * 0.012) * 16 - 4 + fbm(x * 0.05 + 7, z * 0.05) * 2.5
     // Rise toward the valley rim so the circuit sits in a bowl.
-    const cx = x + 30
-    const cz = z + 80
-    const rad = Math.hypot(cx * 0.85, cz)
-    h += THREE.MathUtils.smoothstep(rad, 150, 260) * 26
+    const cx = x + 28
+    const cz = z + 32
+    const rad = Math.hypot(cx * 0.95, cz * 0.9)
+    h += THREE.MathUtils.smoothstep(rad, 170, 270) * 26
     for (const l of LAKES) {
       const d = Math.hypot(x - l.x, z - l.z)
       h = Math.min(h, THREE.MathUtils.lerp(-3.2, h, THREE.MathUtils.smoothstep(d, l.r * 0.55, l.r * 1.45)))
     }
     const road = field.query(x, z)
-    if (road.d < 40) {
+    if (road.d < 40 && !road.bridge) {
       const k = THREE.MathUtils.smoothstep(road.d, 0.5, 14)
       h = THREE.MathUtils.lerp(road.y - 0.45, Math.max(h, road.y - 6), k)
       if (road.d > 0.5) h = Math.max(h, road.y - 0.45 - road.d * 0.6)
@@ -227,7 +236,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   // Far ring below the rim hides the terrain edge in the fog.
   const ring = new THREE.Mesh(new THREE.RingGeometry(420, 1400, 48), new THREE.MeshBasicMaterial({ color: '#1e4d6b' }))
   ring.rotation.x = -Math.PI / 2
-  ring.position.set(-30, 18, -80)
+  ring.position.set(-28, 18, -32)
   scene.add(ring)
 
   // ── training courtyards ──────────────────────────────────────────────
@@ -329,9 +338,9 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const cupCols = ['#6b8798', '#9ab2c1', '#4f7188', '#d7e2e8', '#e30613']
   for (let i = 0; i < 11; i += 1) {
     const a = (i / 11) * Math.PI * 2 + 0.3
-    const R = 290 + (i % 3) * 40
-    const x = -30 + Math.cos(a) * R * 1.1
-    const z = -80 + Math.sin(a) * R * 0.85
+    const R = 300 + (i % 3) * 40
+    const x = -28 + Math.cos(a) * R * 1.05
+    const z = -32 + Math.sin(a) * R
     const s = 28 + (i % 4) * 9
     const cup = cupcake(cupCols[i % cupCols.length], s)
     cup.position.set(x, 8 + (i % 2) * 6, z)
@@ -355,7 +364,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
       m.position.set((k - n / 2) * 7 + rand() * 3, rand() * 3, rand() * 5)
       c.add(m)
     }
-    c.position.set(-300 + rand() * 560, 70 + rand() * 50, -330 + rand() * 420)
+    c.position.set(-320 + rand() * 600, 70 + rand() * 50, -340 + rand() * 560)
     c.userData.speed = 1 + rand() * 2
     clouds.add(c)
   }
@@ -437,7 +446,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const fans: { mesh: THREE.InstancedMesh; base: THREE.Matrix4[]; phase: number[] } = { mesh: new THREE.InstancedMesh(fanGeometry(), TOON, 60), base: [], phase: [] }
   const bleacher = new THREE.MeshStandardMaterial({ color: '#5470a8', flatShading: true, roughness: 0.7 })
   let fanCount = 0
-  for (const [sAt, side] of [[-40, 1], [-70, -1], [20, 1]] as const) {
+  for (const [sAt, side] of [[14, 1], [40, -1], [62, 1]] as const) {
     const smp = track.main.at(sAt)
     const yaw = Math.atan2(smp.tan.x, smp.tan.z)
     for (let row = 0; row < 3; row += 1) {
@@ -566,8 +575,23 @@ function buildCampusStructures(scene: THREE.Scene, track: Track): void {
   const roofColors = ['#1e4d6b', '#e30613', '#5470a8', '#102a43']
   const structure = (distance: number, lateral: number, width: number, depth: number, height: number, label: string, index: number) => {
     const sample = track.main.at(distance)
+    // Keep every corner clear of all roads and lakes; try the other side of the track before giving up.
+    const clear = (lat: number) => {
+      const c = sample.pos.clone().addScaledVector(sample.right, lat)
+      const along = sample.tan.clone().setY(0).normalize()
+      return [-1, 1].every(a => [-1, 1].every(b => {
+        const p = c.clone().addScaledVector(along, (a * width) / 2).addScaledVector(sample.right, (b * depth) / 2)
+        const dry = LAKES.every(l => Math.hypot(p.x - l.x, p.z - l.z) > l.r * 1.4)
+        return dry && track.main.closest(p).distance > WALL + 3 && track.short.closest(p).distance > SHORT_WALL + 3
+      }))
+    }
+    if (!clear(lateral)) {
+      if (clear(-lateral)) lateral = -lateral
+      else return
+    }
     const g = new THREE.Group()
     g.position.copy(sample.pos).addScaledVector(sample.right, lateral)
+    g.position.y -= 0.4
     g.rotation.y = Math.atan2(sample.tan.x, sample.tan.z)
     const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), new THREE.MeshStandardMaterial({ color: wallColors[index % wallColors.length], flatShading: true, roughness: 0.78 }))
     wall.position.y = height / 2
@@ -591,6 +615,9 @@ function buildCampusStructures(scene: THREE.Scene, track: Track): void {
   structure(track.length * 0.37, -25, 22, 13, 8, 'ROBOTICA', 1)
   structure(track.length * 0.62, 25, 20, 12, 7, 'OFICINA 4.0', 2)
   structure(track.length * 0.83, -23, 17, 10, 6, 'LAB SENAI', 3)
+  structure(track.length * 0.66, 26, 20, 12, 8, 'MECATRONICA', 0)
+  structure(track.length * 0.74, -26, 22, 12, 7, 'AUTOMOTIVA', 1)
+  structure(track.length * 0.95, 24, 18, 11, 6, 'ELETRICA', 2)
   const cone = new THREE.InstancedMesh(new THREE.ConeGeometry(0.42, 1.1, 6), new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.7 }), 24)
   const matrix = new THREE.Matrix4()
   let n = 0
