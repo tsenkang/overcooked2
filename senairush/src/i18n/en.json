@@ -148,7 +148,7 @@
   "tutorial.lookBack": "Look back",
   "results.winner": "{player} wins!",
   "results.local": "Split-screen race — not added to the local leaderboard.",
-  "tutorial.pads0": "Gamepads work too: plug in one and it drives P2, or two for one each. Esc pauses.",
-  "tutorial.pads1": "1 gamepad connected: it drives P2. Plug in a second one for P1.",
-  "tutorial.pads2": "2 gamepads connected: the first drives P1, the second drives P2."
+  "tutorial.pads0": "Gamepads work too: one drives whichever kart the keyboard isn’t using; with two, the first one pressed is P1. Esc pauses.",
+  "tutorial.pads1": "1 gamepad: it drives whichever kart the keyboard isn’t using (WASD → pad is P2, arrows → pad is P1).",
+  "tutorial.pads2": "2 gamepads: the first one pressed drives P1, the other drives P2."
 }

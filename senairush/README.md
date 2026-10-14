@@ -64,8 +64,10 @@ velocímetro. O minimapa mostra os dois (contorno amarelo = J1, azul = J2).
 | Olhar para trás | C | . (ponto) |
 | Pausar | Esc / P | Esc / P |
 
-Controles (gamepad) também funcionam: com **1 controle** ele fica com o J2 (o J1 segue no
-teclado); com **2 controles** o primeiro é do J1 e o segundo do J2. O teclado continua valendo junto. Quem cruzar a linha primeiro
+Controles (gamepad) também funcionam. Com **1 controle**, ele dirige o kart que o teclado não está
+usando: quem joga no WASD fica com o J1 e o controle vira J2; quem joga nas setas fica com o J2 e o
+controle vira J1. Com **2 controles**, o primeiro em que alguém apertar um botão é o J1. O teclado
+continua valendo junto. Quem cruzar a linha primeiro
 ganha a câmera de comemoração na sua metade enquanto o outro termina; o resultado mostra quem venceu.
 Corridas em 2 jogadores não entram no ranking local.
 

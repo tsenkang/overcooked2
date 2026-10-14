@@ -148,7 +148,7 @@
   "tutorial.lookBack": "向后看",
   "results.winner": "{player} 获胜！",
   "results.local": "分屏比赛——成绩不会加入本地排行榜。",
-  "tutorial.pads0": "也支持手柄：接一个由 P2 使用，接两个则各用一个。按 Esc 暂停。",
-  "tutorial.pads1": "已连接 1 个手柄：由 P2 使用。再接一个给 P1。",
-  "tutorial.pads2": "已连接 2 个手柄：第一个是 P1，第二个是 P2。"
+  "tutorial.pads0": "也支持手柄：一个手柄控制键盘没在用的那辆车；两个手柄时，先按的是 P1。按 Esc 暂停。",
+  "tutorial.pads1": "1 个手柄：控制键盘没在用的那辆车（用 WASD 时手柄是 P2，用方向键时手柄是 P1）。",
+  "tutorial.pads2": "2 个手柄：先按的手柄是 P1，另一个是 P2。"
 }

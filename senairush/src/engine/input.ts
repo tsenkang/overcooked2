@@ -87,6 +87,10 @@ export class Input {
   private touchButtons = new Set<Action>()
   private padPrev = new Map<number, Set<Action>>()
   private pads: PadState[] = []
+  /** Pad indices in the order they were first used; idle or phantom pads never get a player. */
+  private padOrder: number[] = []
+  /** Which half of the keyboard last steered or pedalled (split screen). */
+  private lastKeyboardHalf: PlayerSlot | 0 = 0
   private gamepadHeld_ = new Set<Action>()
   private listeners: Array<() => void> = []
 
@@ -101,6 +105,10 @@ export class Input {
       if (!e.repeat) {
         this.keys.add(e.code)
         this.method = 'keyboard'
+        for (const slot of [1, 2] as PlayerSlot[]) {
+          const k = SPLIT_KEYS[slot]
+          if ([...k.left, ...k.right, ...k.accelerate, ...k.brake].includes(e.code)) this.lastKeyboardHalf = slot
+        }
         for (const [action, codes] of Object.entries(KEY_BINDINGS) as [Action, string[]][]) {
           if (codes.includes(e.code)) this.pressed_.add(action)
         }
@@ -156,7 +164,10 @@ export class Input {
       const lt = pad.buttons[6]?.value ?? 0
       const dpadX = (pad.buttons[15]?.pressed ? 1 : 0) - (pad.buttons[14]?.pressed ? 1 : 0)
       const dpadY = (pad.buttons[12]?.pressed ? 1 : 0) - (pad.buttons[13]?.pressed ? 1 : 0)
-      if (lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)) this.method = 'gamepad'
+      if (lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)) {
+        this.method = 'gamepad'
+        if (!this.padOrder.includes(pad.index)) this.padOrder.push(pad.index)
+      }
       const held = new Set<Action>()
       for (const [action, buttons] of Object.entries(PAD_BINDINGS) as [Action, number[]][]) {
         if (buttons.some(i => pad.buttons[i]?.pressed)) held.add(action)
@@ -176,6 +187,7 @@ export class Input {
       }
     })
     for (const index of [...this.padPrev.keys()]) if (!seen.has(index)) this.padPrev.delete(index)
+    this.padOrder = this.padOrder.filter(index => seen.has(index))
     if (this.pads.length) {
       // Solo play and menus: any pad drives.
       const merged = {
@@ -219,18 +231,26 @@ export class Input {
     return this.gamepadHeld_.has(action)
   }
 
-  /** Number of gamepads connected right now. */
+  /** Gamepads that have been used (connected but untouched pads don't count). */
   get padCount(): number {
-    return this.pads.length
+    return this.activePads().length
+  }
+
+  private activePads(): PadState[] {
+    return this.padOrder.map(i => this.pads.find(p => p.index === i)).filter((p): p is PadState => !!p)
   }
 
   /**
-   * Which gamepad a split-screen player owns: with two pads each player gets one (first = P1);
-   * a single pad goes to P2, since P1 already has the left side of the keyboard.
+   * Which gamepad a split-screen player owns. Two used pads: the first one touched drives P1,
+   * the second P2. One pad: it drives the kart the keyboard is not driving (WASD in use → P2,
+   * arrows in use → P1, keyboard untouched → P1), so a keyboard player and a pad player never
+   * end up on the same kart.
    */
   private padFor(slot: PlayerSlot): PadState | undefined {
-    if (this.pads.length >= 2) return this.pads[slot - 1]
-    return slot === 2 ? this.pads[0] : undefined
+    const pads = this.activePads()
+    if (pads.length >= 2) return pads[slot - 1]
+    const owner: PlayerSlot = this.lastKeyboardHalf === 1 ? 2 : 1
+    return slot === owner ? pads[0] : undefined
   }
 
   /**
