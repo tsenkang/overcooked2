@@ -247,6 +247,7 @@ export class Game {
     tuning.activate('run')
     this.runUnranked = tuning.unranked
     this.localTwoPlayer = !!secondCharacterId
+    this.input.resetSplit()
     this.removeShowroom()
     this.spawn(characterById(characterId), secondCharacterId ? characterById(secondCharacterId) : null)
     this.mode = 'playing'

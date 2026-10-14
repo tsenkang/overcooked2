@@ -91,6 +91,8 @@ export class Input {
   private padOrder: number[] = []
   /** Which half of the keyboard last steered or pedalled (split screen). */
   private lastKeyboardHalf: PlayerSlot | 0 = 0
+  /** Player-chosen override: hand the pads to the other players (pause menu). */
+  padSwap = false
   private gamepadHeld_ = new Set<Action>()
   private listeners: Array<() => void> = []
 
@@ -248,9 +250,26 @@ export class Input {
    */
   private padFor(slot: PlayerSlot): PadState | undefined {
     const pads = this.activePads()
-    if (pads.length >= 2) return pads[slot - 1]
-    const owner: PlayerSlot = this.lastKeyboardHalf === 1 ? 2 : 1
-    return slot === owner ? pads[0] : undefined
+    let owners: [PadState | undefined, PadState | undefined]
+    if (pads.length >= 2) owners = [pads[0], pads[1]]
+    else owners = this.lastKeyboardHalf === 1 ? [undefined, pads[0]] : [pads[0], undefined]
+    if (this.padSwap) owners = [owners[1], owners[0]]
+    return owners[slot - 1]
+  }
+
+  /** Split screen: does this player currently drive with a gamepad? (HUD / pause status) */
+  hasPad(slot: PlayerSlot): boolean {
+    return !!this.padFor(slot)
+  }
+
+  /** Connected gamepads, including ones nobody has pressed yet. */
+  get connectedPadCount(): number {
+    return this.pads.length
+  }
+
+  /** New split-screen race: menu key presses shouldn't decide who gets the pad. */
+  resetSplit(): void {
+    this.lastKeyboardHalf = 0
   }
 
   /**

@@ -136,7 +136,7 @@ export class Ui {
           <div class="lapbox"><span class="lap-label" data-i18n="hud.lap"></span><b data-lap>1/3</b></div>
           <div class="timebox" data-time>0:00.00</div>
         </div>
-        <div class="ptag ptag-${slot}" data-i18n="hud.p${slot}"></div>
+        <div class="ptag ptag-${slot}"><span data-i18n="hud.p${slot}"></span><i class="dev" data-dev></i></div>
         <div class="hud-tr">
           <div class="itemslot" data-itemslot><div class="item-icon" data-item-icon></div></div>
           <div class="item-name" data-item-name></div>
@@ -168,9 +168,10 @@ export class Ui {
         <nav class="menu">
           <button class="btn btn-primary" data-nav data-act="resume"><span data-i18n="menu.resume"></span></button>
           <button class="btn" data-nav data-act="restart"><span data-i18n="menu.restart"></span></button>
+          <button class="btn" data-nav data-act="swap-pad" data-swap-pad hidden><span data-i18n="menu.swapPad"></span></button>
           <button class="btn" data-nav data-act="settings"><span data-i18n="menu.settings"></span></button>
           <button class="btn" data-nav data-act="quit"><span data-i18n="menu.quit"></span></button>
-        </nav></div></section>`),
+        </nav><p class="pad-status" data-pad-status hidden></p></div></section>`),
     )
     add('settings', h(`<section><div class="panel modal wide" data-settings></div></section>`))
     add('leaderboard', h(`<section><div class="panel modal wide"><h2 class="panel-title" data-i18n="board.title"></h2><div data-board></div><div class="modal-actions"><button class="btn" data-nav data-act="back"><span data-i18n="menu.back"></span></button></div></div></section>`))
@@ -251,6 +252,11 @@ export class Ui {
         this.audio.play('uiMove')
         break
       }
+      case 'swap-pad':
+        this.input.padSwap = !this.input.padSwap
+        this.audio.play('uiSelect')
+        this.refreshPadStatus()
+        break
       case 'resume':
         this.audio.play(sfx)
         this.actions.resume()
@@ -309,6 +315,7 @@ export class Ui {
     for (const [name, el] of this.screens) el.classList.toggle('active', name === screen)
     document.body.dataset.screen = screen
     if (screen === 'title') this.refreshTitle()
+    if (screen === 'pause') this.refreshPadStatus()
     if (screen === 'settings') this.refreshSettings()
     if (screen === 'select') this.pick(this.selected, true)
     if (screen === 'hud') {
@@ -375,6 +382,22 @@ export class Ui {
       p2.innerHTML = `${this.avatar(c.id)}<span>${esc(this.t('select.p2', { name: this.t(`char.${c.id}.name`) }))}</span><b aria-hidden="true">▶</b>`
     }
     scr?.querySelectorAll<HTMLElement>('.card').forEach(card => card.classList.toggle('p2', this.localTwoPlayer && card.dataset.id === this.secondSelected))
+  }
+
+  /** Pause menu, split screen only: what the game sees and who each gamepad drives. */
+  private refreshPadStatus(): void {
+    const split = document.body.classList.contains('local-split')
+    const btn = this.q('pause', '[data-swap-pad]')
+    const status = this.q('pause', '[data-pad-status]')
+    btn.hidden = !split
+    status.hidden = !split
+    if (!split) return
+    const device = (slot: PlayerSlot) => this.t(this.input.hasPad(slot) ? 'pads.padKeys' : 'pads.keys')
+    status.innerHTML = [
+      esc(this.t('pads.count', { n: this.input.connectedPadCount })),
+      `<span class="ptag ptag-1">${esc(this.t('hud.p1'))}</span> ${esc(device(1))}`,
+      `<span class="ptag ptag-2">${esc(this.t('hud.p2'))}</span> ${esc(device(2))}`,
+    ].join('<br>')
   }
 
   private refreshTitle(): void {
@@ -687,6 +710,13 @@ export class Ui {
       if (v.toastTimer <= 0) q('[data-toast]').classList.remove('on')
     }
     q('').classList.toggle('done', s.finished)
+    // Split screen: show which player the gamepad is driving right now.
+    const dev = q('[data-dev]')
+    const usesPad = s.twoPlayer && this.input.hasPad(slot)
+    if (dev.dataset.on !== String(usesPad)) {
+      dev.dataset.on = String(usesPad)
+      dev.textContent = usesPad ? ` · ${this.t('pads.short')}` : ''
+    }
     if (slot !== 1) return
     // Shared overlays (one per screen): controls card, skip button, minimap.
     const tut = this.q('hud', '[data-tutorial]')

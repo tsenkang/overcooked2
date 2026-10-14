@@ -150,5 +150,10 @@
   "results.local": "Split-screen race — not added to the local leaderboard.",
   "tutorial.pads0": "Gamepads work too: one drives whichever kart the keyboard isn’t using; with two, the first one pressed is P1. Esc pauses.",
   "tutorial.pads1": "1 gamepad: it drives whichever kart the keyboard isn’t using (WASD → pad is P2, arrows → pad is P1).",
-  "tutorial.pads2": "2 gamepads: the first one pressed drives P1, the other drives P2."
+  "tutorial.pads2": "2 gamepads: the first one pressed drives P1, the other drives P2.",
+  "menu.swapPad": "Swap gamepad P1 ⇄ P2",
+  "pads.short": "gamepad",
+  "pads.count": "Gamepads detected: {n}",
+  "pads.keys": "keyboard",
+  "pads.padKeys": "gamepad + keyboard"
 }

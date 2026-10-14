@@ -78,6 +78,7 @@ body {
   pointer-events: none;
 }
 body.local-split #split-divider { display: block; }
+body.local-split:not([data-screen='hud']) #split-divider { display: none; }
 body.local-split #ui {
   pointer-events: none;
 }
@@ -1419,6 +1420,19 @@ body.local-split .count {
 }
 .ptag-2 {
   background: #62d8ff;
+}
+.ptag .dev {
+  font-style: normal;
+}
+.pad-status {
+  margin: 14px 0 0;
+  font: 700 14px / 1.9 var(--body);
+  color: var(--ink-2);
+  text-align: center;
+}
+.pad-status .ptag {
+  font-size: 12px;
+  padding: 2px 8px 3px;
 }
 .tutorial ul.two li {
   display: grid;
