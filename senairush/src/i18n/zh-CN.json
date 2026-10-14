@@ -146,7 +146,9 @@
   "hud.p1": "P1",
   "hud.p2": "P2",
   "tutorial.lookBack": "向后看",
-  "tutorial.p2pad": "P2 也可以使用手柄。按 Esc 为双方暂停。",
   "results.winner": "{player} 获胜！",
-  "results.local": "分屏比赛——成绩不会加入本地排行榜。"
+  "results.local": "分屏比赛——成绩不会加入本地排行榜。",
+  "tutorial.pads0": "也支持手柄：接一个由 P2 使用，接两个则各用一个。按 Esc 暂停。",
+  "tutorial.pads1": "已连接 1 个手柄：由 P2 使用。再接一个给 P1。",
+  "tutorial.pads2": "已连接 2 个手柄：第一个是 P1，第二个是 P2。"
 }

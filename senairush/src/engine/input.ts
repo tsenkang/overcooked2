@@ -52,6 +52,24 @@ const PAD_BINDINGS: Record<Action, number[]> = {
   lookBack: [11],
 }
 
+/** One connected gamepad, sampled this frame. */
+type PadState = { index: number; steer: number; throttle: number; brake: number; moveX: number; moveY: number; held: Set<Action> }
+
+/** Connected gamepads in slot order. Never throws (a frame's permissions policy can block the API). */
+function connectedPads(): Gamepad[] {
+  try {
+    // Some browsers report connected=false for one frame after focus changes; the slot itself is enough.
+    return [...(navigator.getGamepads?.() ?? [])].filter((p): p is Gamepad => p != null).sort((a, b) => a.index - b.index)
+  } catch {
+    return []
+  }
+}
+
+/** The value pushed furthest from zero (so an idle source never cancels an active one). */
+function strongest(values: number[]): number {
+  return values.reduce((best, v) => (Math.abs(v) > Math.abs(best) ? v : best), 0)
+}
+
 export class Input {
   /** Driving axes: steer -1..1 (right +), throttle/brake 0..1. */
   readonly axes = { steer: 0, throttle: 0, brake: 0 }
@@ -67,7 +85,8 @@ export class Input {
   private pressed_ = new Set<Action>()
   private touchSteer = 0
   private touchButtons = new Set<Action>()
-  private padPrev = new Set<Action>()
+  private padPrev = new Map<number, Set<Action>>()
+  private pads: PadState[] = []
   private gamepadHeld_ = new Set<Action>()
   private listeners: Array<() => void> = []
 
@@ -127,38 +146,55 @@ export class Input {
       brake = this.touchButtons.has('brake') ? 1 : 0
     }
 
-    // Some browsers report connected=false for one frame after focus changes; the slot itself is enough.
-    const pad = navigator.getGamepads?.().find(p => p != null)
-    if (pad) {
-      const dead = (v: number, d = 0.16) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d))
+    // Every connected gamepad is sampled on its own so split screen can give each player a pad.
+    const dead = (v: number, d = 0.16) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d))
+    const seen = new Set<number>()
+    this.pads = connectedPads().map(pad => {
       const lx = dead(pad.axes[0] ?? 0)
       const ly = dead(pad.axes[1] ?? 0)
       const rt = pad.buttons[7]?.value ?? 0
       const lt = pad.buttons[6]?.value ?? 0
       const dpadX = (pad.buttons[15]?.pressed ? 1 : 0) - (pad.buttons[14]?.pressed ? 1 : 0)
       const dpadY = (pad.buttons[12]?.pressed ? 1 : 0) - (pad.buttons[13]?.pressed ? 1 : 0)
-      const active = lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)
-      if (active) this.method = 'gamepad'
-      if (this.method === 'gamepad') {
-        steer = lx || dpadX
-        throttle = Math.max(rt > 0.05 ? rt : 0, pad.buttons[0]?.pressed ? 1 : 0)
-        brake = Math.max(lt > 0.05 ? lt : 0, pad.buttons[1]?.pressed ? 1 : 0)
-        mx = lx || dpadX
-        my = -ly || dpadY
-      }
-      const now = new Set<Action>()
+      if (lx !== 0 || ly !== 0 || rt > 0.05 || lt > 0.05 || pad.buttons.some(b => b.pressed)) this.method = 'gamepad'
+      const held = new Set<Action>()
       for (const [action, buttons] of Object.entries(PAD_BINDINGS) as [Action, number[]][]) {
-        if (buttons.some(i => pad.buttons[i]?.pressed)) now.add(action)
+        if (buttons.some(i => pad.buttons[i]?.pressed)) held.add(action)
       }
-      for (const action of now) {
+      const prev = this.padPrev.get(pad.index)
+      for (const action of held) if (!prev?.has(action)) this.pressed_.add(action)
+      this.padPrev.set(pad.index, held)
+      seen.add(pad.index)
+      return {
+        index: pad.index,
+        steer: lx || dpadX,
+        throttle: Math.max(rt > 0.05 ? rt : 0, pad.buttons[0]?.pressed ? 1 : 0),
+        brake: Math.max(lt > 0.05 ? lt : 0, pad.buttons[1]?.pressed ? 1 : 0),
+        moveX: lx || dpadX,
+        moveY: -ly || dpadY,
+        held,
+      }
+    })
+    for (const index of [...this.padPrev.keys()]) if (!seen.has(index)) this.padPrev.delete(index)
+    if (this.pads.length) {
+      // Solo play and menus: any pad drives.
+      const merged = {
+        steer: strongest(this.pads.map(p => p.steer)),
+        throttle: Math.max(...this.pads.map(p => p.throttle)),
+        brake: Math.max(...this.pads.map(p => p.brake)),
+      }
+      if (this.method === 'gamepad') {
+        steer = merged.steer
+        throttle = merged.throttle
+        brake = merged.brake
+        mx = strongest(this.pads.map(p => p.moveX))
+        my = strongest(this.pads.map(p => p.moveY))
+      }
+      for (const p of this.pads) for (const action of p.held) {
         this.held_.add(action)
-        if (!this.padPrev.has(action)) this.pressed_.add(action)
+        this.gamepadHeld_.add(action)
       }
-      this.padPrev = now
-      this.gamepadHeld_ = now
-      this.gamepadAxes.steer = lx || dpadX
-      this.gamepadAxes.throttle = Math.max(rt > 0.05 ? rt : 0, pad.buttons[0]?.pressed ? 1 : 0)
-      this.gamepadAxes.brake = Math.max(lt > 0.05 ? lt : 0, pad.buttons[1]?.pressed ? 1 : 0)
+      Object.assign(this.gamepadAxes, merged)
     }
     this.axes.steer = Math.max(-1, Math.min(1, steer))
     this.axes.throttle = Math.max(0, Math.min(1, throttle))
@@ -183,18 +219,31 @@ export class Input {
     return this.gamepadHeld_.has(action)
   }
 
+  /** Number of gamepads connected right now. */
+  get padCount(): number {
+    return this.pads.length
+  }
+
   /**
-   * Split-keyboard driving for local two-player. Player 2 may also use a gamepad; whichever
-   * source pushes harder wins, so both work without a setting.
+   * Which gamepad a split-screen player owns: with two pads each player gets one (first = P1);
+   * a single pad goes to P2, since P1 already has the left side of the keyboard.
+   */
+  private padFor(slot: PlayerSlot): PadState | undefined {
+    if (this.pads.length >= 2) return this.pads[slot - 1]
+    return slot === 2 ? this.pads[0] : undefined
+  }
+
+  /**
+   * Split-screen driving: each player's half of the keyboard plus their own gamepad, if any.
+   * Whichever source pushes harder wins, so both work without a setting.
    */
   splitAxes(slot: PlayerSlot): { steer: number; throttle: number; brake: number } {
     const keys = SPLIT_KEYS[slot]
     const k = (codes: string[]) => codes.some(code => this.keys.has(code))
-    const steer = (k(keys.right) ? 1 : 0) - (k(keys.left) ? 1 : 0)
-    const out = { steer, throttle: k(keys.accelerate) ? 1 : 0, brake: k(keys.brake) ? 1 : 0 }
-    if (slot === 2) {
-      const pad = this.gamepadAxes
-      if (Math.abs(pad.steer) > Math.abs(out.steer)) out.steer = pad.steer
+    const out = { steer: (k(keys.right) ? 1 : 0) - (k(keys.left) ? 1 : 0), throttle: k(keys.accelerate) ? 1 : 0, brake: k(keys.brake) ? 1 : 0 }
+    const pad = this.padFor(slot)
+    if (pad) {
+      out.steer = strongest([out.steer, pad.steer])
       out.throttle = Math.max(out.throttle, pad.throttle)
       out.brake = Math.max(out.brake, pad.brake)
     }
@@ -203,7 +252,7 @@ export class Input {
 
   splitHeld(slot: PlayerSlot, action: 'drift' | 'item' | 'lookBack'): boolean {
     const held = SPLIT_KEYS[slot][action].some(code => this.keys.has(code))
-    return held || (slot === 2 && this.gamepadHeld_.has(action))
+    return held || !!this.padFor(slot)?.held.has(action)
   }
 
   pressed(action: Action): boolean {
@@ -219,11 +268,12 @@ export class Input {
     this.pressed_.clear()
   }
 
-  /** Gamepad rumble where supported (Chrome/Edge dual-rumble). */
-  rumble(strong: number, weak: number, ms: number): void {
-    if (this.method !== 'gamepad') return
-    // Some browsers report connected=false for one frame after focus changes; the slot itself is enough.
-    const pad = navigator.getGamepads?.().find(p => p != null) as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, o: object) => Promise<unknown> } }) | undefined
+  /** Gamepad rumble where supported (Chrome/Edge dual-rumble). With a slot, only that player's pad. */
+  rumble(strong: number, weak: number, ms: number, slot?: PlayerSlot): void {
+    if (slot === undefined && this.method !== 'gamepad') return
+    const index = slot === undefined ? this.pads[0]?.index : this.padFor(slot)?.index
+    if (index === undefined) return
+    const pad = connectedPads().find(p => p.index === index) as (Gamepad & { vibrationActuator?: { playEffect?: (t: string, o: object) => Promise<unknown> } }) | undefined
     pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: Math.min(1, strong), weakMagnitude: Math.min(1, weak) })?.catch?.(() => undefined)
   }
 

@@ -591,6 +591,7 @@ export class Game {
   private handleEvents(r: Racer): void {
     const me = r.isPlayer
     const cam = this.camFor(r)
+    const pad = this.twoPlayer && me ? this.slotOf(r) : undefined
     const near = this.humans().some(p => r.position.distanceTo(p.position) < 45)
     for (const e of r.events) {
       switch (e.type) {
@@ -604,7 +605,7 @@ export class Game {
         case 'driftTier':
           if (me) {
             this.audio.play('tier', { rate: [1, 1, 1.25, 1.5][e.tier] })
-            this.input.rumble(0.1 * e.tier, 0.3, 80)
+            this.input.rumble(0.1 * e.tier, 0.3, 80, pad)
           }
           break
         case 'driftEnd':
@@ -613,7 +614,7 @@ export class Game {
           if (me) {
             this.audio.play(e.source === 'pad' ? 'pad' : 'boost', { rate: e.source === 'drift' ? 0.8 + e.seconds * 0.3 : 1 })
             cam.punch(e.source === 'drift' ? 0.3 + e.seconds * 0.35 : 0.5)
-            this.input.rumble(0.3, 0.5, 160)
+            this.input.rumble(0.3, 0.5, 160, pad)
             if (e.source === 'drift' && this.tutorial && this.tutorialStep === 'driftRelease') this.advanceTutorial('crate')
           }
           break
@@ -635,7 +636,7 @@ export class Game {
             if (me) {
               this.audio.play('land', { gain: Math.min(1, e.impact / 10) })
               cam.addTrauma(Math.min(0.35, e.impact * 0.025))
-              this.input.rumble(0.5, 0.2, 120)
+              this.input.rumble(0.5, 0.2, 120, pad)
             }
           }
           break
@@ -646,7 +647,7 @@ export class Game {
           if (me) {
             this.audio.play(other ? 'bump' : 'wall', { gain: Math.min(1, e.strength / 12) }, 0.12)
             cam.addTrauma(Math.min(0.4, e.strength * 0.03))
-            this.input.rumble(0.4, 0.4, 100)
+            this.input.rumble(0.4, 0.4, 100, pad)
           }
           break
         }
@@ -694,7 +695,7 @@ export class Game {
       this.audio.play('hitMe')
       this.camFor(victim).addTrauma(0.75)
       this.hitstop = 0.07
-      this.input.rumble(1, 0.8, 300)
+      this.input.rumble(1, 0.8, 300, this.twoPlayer ? this.slotOf(victim) : undefined)
     } else if (by?.isPlayer) {
       this.hooks.toast(kind === 'bee' ? 'toast.beeHit' : 'toast.taffyHit', { name: `char.${victim.character.id}.name` }, this.slotOf(by))
       this.hitstop = 0.04

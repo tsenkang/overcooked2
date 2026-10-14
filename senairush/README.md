@@ -64,7 +64,8 @@ velocímetro. O minimapa mostra os dois (contorno amarelo = J1, azul = J2).
 | Olhar para trás | C | . (ponto) |
 | Pausar | Esc / P | Esc / P |
 
-O Jogador 2 também pode usar um controle (gamepad) em vez das setas. Quem cruzar a linha primeiro
+Controles (gamepad) também funcionam: com **1 controle** ele fica com o J2 (o J1 segue no
+teclado); com **2 controles** o primeiro é do J1 e o segundo do J2. O teclado continua valendo junto. Quem cruzar a linha primeiro
 ganha a câmera de comemoração na sua metade enquanto o outro termina; o resultado mostra quem venceu.
 Corridas em 2 jogadores não entram no ranking local.
 

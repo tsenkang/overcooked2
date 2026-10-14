@@ -146,7 +146,9 @@
   "hud.p1": "P1",
   "hud.p2": "P2",
   "tutorial.lookBack": "Look back",
-  "tutorial.p2pad": "P2 can also plug in a gamepad. Esc pauses for both.",
   "results.winner": "{player} wins!",
-  "results.local": "Split-screen race — not added to the local leaderboard."
+  "results.local": "Split-screen race — not added to the local leaderboard.",
+  "tutorial.pads0": "Gamepads work too: plug in one and it drives P2, or two for one each. Esc pauses.",
+  "tutorial.pads1": "1 gamepad connected: it drives P2. Plug in a second one for P1.",
+  "tutorial.pads2": "2 gamepads connected: the first drives P1, the second drives P2."
 }

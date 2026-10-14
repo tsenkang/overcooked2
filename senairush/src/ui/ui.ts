@@ -312,6 +312,8 @@ export class Ui {
     if (screen === 'settings') this.refreshSettings()
     if (screen === 'select') this.pick(this.selected, true)
     if (screen === 'hud') {
+      // A menu button left focused would react to Space/Enter, which are driving keys now.
+      ;(document.activeElement as HTMLElement | null)?.blur?.()
       for (const slot of SLOTS) {
         this.views.get(slot)!.lastPlace = 0
         this.qv(slot, '[data-banner]').className = 'banner'
@@ -839,7 +841,7 @@ export class Ui {
         ['tutorial.lookBack', keyCap('C'), keyCap('.')],
         ['tutorial.pause', keyCap('Esc', true), keyCap('Esc', true)],
       ]
-      this.q('hud', '[data-tutorial]').innerHTML = `<h3 class="panel-title">${esc(this.t('tutorial.title'))}</h3><ul class="two"><li class="head"><span></span><span class="ptag ptag-1">${esc(this.t('hud.p1'))}</span><span class="ptag ptag-2">${esc(this.t('hud.p2'))}</span></li>${rows.map(([k, a, b]) => `<li><span>${esc(this.t(k))}</span><span class="keys">${a}</span><span class="keys">${b}</span></li>`).join('')}</ul><p class="tip">${esc(this.t('tutorial.p2pad'))}</p>`
+      this.q('hud', '[data-tutorial]').innerHTML = `<h3 class="panel-title">${esc(this.t('tutorial.title'))}</h3><ul class="two"><li class="head"><span></span><span class="ptag ptag-1">${esc(this.t('hud.p1'))}</span><span class="ptag ptag-2">${esc(this.t('hud.p2'))}</span></li>${rows.map(([k, a, b]) => `<li><span>${esc(this.t(k))}</span><span class="keys">${a}</span><span class="keys">${b}</span></li>`).join('')}</ul><p class="tip">${esc(this.t(`tutorial.pads${Math.min(2, this.input.padCount)}`))}</p>`
       return
     }
     const m = this.input.method
