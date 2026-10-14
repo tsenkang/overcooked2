@@ -779,8 +779,10 @@ export class Ui {
         icon.innerHTML = ITEM_ICONS[s.item]
         itemSlot.className = 'itemslot ready'
         retrigger(itemSlot, 'pop')
-        name.textContent = this.t(`item.${s.item}`)
       }
+      // Triple Pepper counts down its uses.
+      const label = this.t(`item.${s.item}`) + (s.charges > 1 ? ` ×${s.charges}` : '')
+      if (name.textContent !== label) name.textContent = label
       const d = s.device
       const cap = d ? (d.kind === 'pad' ? PAD_GLYPH.X : keyCap(KEY_SETS[d.set].caps.item, KEY_SETS[d.set].caps.item.length > 1)) : this.input.method === 'gamepad' ? PAD_GLYPH.X : keyCap('Space', true)
       key.innerHTML = this.input.method === 'touch' && !s.split ? '' : this.t('hud.useItem', { key: cap })
@@ -912,6 +914,16 @@ export class Ui {
     el.textContent = this.t(key, v)
     retrigger(el, 'on')
     this.views.get(slot)!.toastTimer = 1.6
+  }
+
+  /** Lightning flash over the whole screen. */
+  flash(): void {
+    let el = this.root.querySelector<HTMLElement>('.flash')
+    if (!el) {
+      el = h('<div class="flash" aria-hidden="true"></div>')
+      this.root.appendChild(el)
+    }
+    retrigger(el, 'on')
   }
 
   hurt(kind: 'bee' | 'taffy' | 'blocked', slot: PlayerSlot = 1): void {

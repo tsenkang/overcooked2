@@ -61,17 +61,18 @@ const LAKES = [
 
 /** Spatial hash of centre-line samples for fast "distance to the road" queries. */
 class RoadField {
-  private cells = new Map<string, { x: number; z: number; y: number; w: number; bridge: boolean }[]>()
+  private cells = new Map<string, { x: number; z: number; y: number; w: number; bridge: boolean; gap: boolean }[]>()
   constructor(track: Track, private readonly size = 12) {
     for (const [sp, w] of [[track.main, WALL], [track.short, SHORT_WALL]] as const) {
       for (let i = 0; i < sp.samples.length; i += 2) {
         const smp = sp.samples[i]
         const p = smp.pos
         const bridge = sp === track.main && smp.s > track.bridge.from && smp.s < track.bridge.to
+        const gap = sp === track.main && track.inGap(smp.s)
         const k = `${Math.floor(p.x / size)},${Math.floor(p.z / size)}`
         let list = this.cells.get(k)
         if (!list) this.cells.set(k, (list = []))
-        list.push({ x: p.x, z: p.z, y: p.y, w, bridge })
+        list.push({ x: p.x, z: p.z, y: p.y, w, bridge, gap })
       }
     }
   }
@@ -79,12 +80,13 @@ class RoadField {
    * Distance beyond the wall line (negative = inside the road) and the road height there.
    * `bridge` is true when the nearest road is the bridge deck, which has no embankment below.
    */
-  query(x: number, z: number, reach = 3): { d: number; y: number; bridge: boolean } {
+  query(x: number, z: number, reach = 3): { d: number; y: number; bridge: boolean; gap: boolean } {
     const cx = Math.floor(x / this.size)
     const cz = Math.floor(z / this.size)
     let best = Infinity
     let y = 0
     let bridge = false
+    let gap = false
     for (let i = -reach; i <= reach; i += 1)
       for (let j = -reach; j <= reach; j += 1) {
         const list = this.cells.get(`${cx + i},${cz + j}`)
@@ -95,10 +97,11 @@ class RoadField {
             best = d
             y = p.y
             bridge = p.bridge
+            gap = p.gap
           }
         }
       }
-    return { d: best, y, bridge }
+    return { d: best, y, bridge, gap }
   }
 }
 
@@ -107,7 +110,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const field = new RoadField(track)
 
   // ── sky & fog ───────────────────────────────────────────────
-  scene.fog = new THREE.Fog('#a8c2d4', 170, 560)
+  scene.fog = new THREE.Fog('#a8c2d4', 190, 640)
   scene.background = new THREE.Color('#a8c2d4')
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(900, 32, 16),
@@ -174,6 +177,10 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
       h = Math.min(h, THREE.MathUtils.lerp(-3.2, h, THREE.MathUtils.smoothstep(d, l.r * 0.55, l.r * 1.45)))
     }
     const road = field.query(x, z)
+    if (road.gap && road.d < 34) {
+      // The quarry ravine: a deep cut straight across the road.
+      return THREE.MathUtils.lerp(road.y - 15, Math.max(h, road.y - 6), THREE.MathUtils.smoothstep(road.d, 4, 34))
+    }
     if (road.d < 40 && !road.bridge) {
       const k = THREE.MathUtils.smoothstep(road.d, 0.5, 14)
       h = THREE.MathUtils.lerp(road.y - 0.45, Math.max(h, road.y - 6), k)
@@ -234,7 +241,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   under.position.y = 8
   under.renderOrder = -5
   // Far ring below the rim hides the terrain edge in the fog.
-  const ring = new THREE.Mesh(new THREE.RingGeometry(420, 1400, 48), new THREE.MeshBasicMaterial({ color: '#1e4d6b' }))
+  const ring = new THREE.Mesh(new THREE.RingGeometry(540, 1600, 48), new THREE.MeshBasicMaterial({ color: '#1e4d6b' }))
   ring.rotation.x = -Math.PI / 2
   ring.position.set(-28, 18, -32)
   scene.add(ring)
@@ -250,6 +257,17 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
     w.receiveShadow = true
     scene.add(w)
     waters.push(w)
+  }
+
+  // Stream at the bottom of the ravine.
+  for (const g of track.gaps) {
+    const c = track.main.pointAt((g.from + g.to) / 2)
+    const stream = new THREE.Mesh(new THREE.CircleGeometry(16, 24), waterMat)
+    stream.rotation.x = -Math.PI / 2
+    stream.position.set(c.x, c.y - 11, c.z)
+    stream.userData.baseY = c.y - 11
+    scene.add(stream)
+    waters.push(stream)
   }
 
   // ── campus landscaping and safety markers ───────────────────
@@ -333,12 +351,37 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   mallow.receiveShadow = true
   scene.add(mallow)
 
+  // Quarry rock spires along the south-west canyon.
+  const ROCKS = 70
+  const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.95 }), ROCKS)
+  const rockCols = ['#8c7b6b', '#a39180', '#6f6255', '#b8a48e'].map(c => new THREE.Color(c))
+  let nRocks = 0
+  for (let tries = 0; tries < 4000 && nRocks < ROCKS; tries += 1) {
+    const x = -280 + rand() * 200
+    const z = -300 + rand() * 170
+    if (x > -90 || z > -175) continue
+    const road = field.query(x, z, 4)
+    if (road.d < 3 || road.d > 30 || road.gap) continue
+    const s = 1.5 + rand() * 3.5
+    // Only on fairly level ground, sunk in a little, so nothing hangs off the canyon walls.
+    const y0 = heightAt(x, z)
+    const around = [heightAt(x + s, z), heightAt(x - s, z), heightAt(x, z + s), heightAt(x, z - s)]
+    if (Math.max(...around.map(h => Math.abs(h - y0))) > s * 0.9) continue
+    m4.compose(v.set(x, Math.min(y0, ...around) + s * 0.35, z), q.setFromEuler(new THREE.Euler(rand() * 0.5, rand() * 6, rand() * 0.5)), sv.set(s, s * (1.2 + rand() * 1.6), s))
+    rocks.setMatrixAt(nRocks, m4)
+    rocks.setColorAt(nRocks, rockCols[nRocks % rockCols.length])
+    nRocks += 1
+  }
+  rocks.count = nRocks
+  rocks.castShadow = rocks.receiveShadow = true
+  scene.add(rocks)
+
   // Distant technical buildings.
   const cupcakes = new THREE.Group()
   const cupCols = ['#6b8798', '#9ab2c1', '#4f7188', '#d7e2e8', '#e30613']
   for (let i = 0; i < 11; i += 1) {
     const a = (i / 11) * Math.PI * 2 + 0.3
-    const R = 300 + (i % 3) * 40
+    const R = 440 + (i % 3) * 40
     const x = -28 + Math.cos(a) * R * 1.05
     const z = -32 + Math.sin(a) * R
     const s = 28 + (i % 4) * 9
@@ -515,7 +558,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
     },
     update(time, dt, focus) {
       this.aim(focus)
-      for (const w of waters) w.position.y = -1.05 + Math.sin(time * 0.8 + w.position.x) * 0.06
+      for (const w of waters) w.position.y = (w.userData.baseY ?? -1.05) + Math.sin(time * 0.8 + w.position.x) * 0.06
       for (const c of clouds.children) {
         c.position.x += c.userData.speed * dt
         if (c.position.x > 280) c.position.x = -320

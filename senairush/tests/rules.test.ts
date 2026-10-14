@@ -1,3 +1,4 @@
+import { ITEM_KINDS } from '../src/game/config'
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { advance, catchUp, createProgress, currentLap, formatTime, itemWeights, rollItem, standings } from '../src/game/rules'
@@ -70,7 +71,13 @@ describe('items', () => {
     let seed = 1
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647)
     for (let i = 0; i < 400; i += 1) seen.add(rollItem(i % 6, 6, rnd))
-    expect([...seen].sort()).toEqual(['bee', 'pepper', 'shield', 'taffy'])
+    expect([...seen].sort()).toEqual([...ITEM_KINDS].sort())
+  })
+  it('keeps the comeback items away from the leader', () => {
+    const front = itemWeights(0, 6)
+    expect(front.star).toBe(0)
+    expect(front.bolt).toBe(0)
+    expect(itemWeights(5, 6).bolt).toBeGreaterThan(0)
   })
   it('catch-up is mild and symmetric in sign', () => {
     expect(catchUp(0)).toBe(1)

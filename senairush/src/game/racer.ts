@@ -28,6 +28,12 @@ export class Racer {
   roulette = 0
   rouletteItem: ItemKind | null = null
   shieldTime = 0
+  /** Uses left on a multi-use item (Triple Pepper). */
+  charges = 0
+  /** Turbo Star: invincible while > 0. */
+  starTime = 0
+  /** Power Outage: shrunk and slowed while > 0. */
+  shrinkTime = 0
   respawnTime = 0
   /** AI: time until it considers using its item. */
   aiItemDelay = 0
@@ -94,6 +100,11 @@ export class Racer {
     return this.shieldTime > 0
   }
 
+  /** Nothing can hurt a racer under the Turbo Star. */
+  get invincible(): boolean {
+    return this.starTime > 0
+  }
+
   /** Update the view from the simulation (interpolated) and spawn continuous effects. */
   animate(alpha: number, dt: number, time: number, fx: Fx, near: boolean): void {
     const k = this.kart
@@ -102,6 +113,9 @@ export class Racer {
     v.root.position.set(p.x, p.y - k.spec.rideHeight, p.z)
     const yaw = k.renderYaw(alpha)
     v.root.rotation.set(0, yaw, 0)
+    // Power Outage shrinks the whole kart; it pops back when the timer ends.
+    const size = THREE.MathUtils.damp(v.root.scale.x, this.shrinkTime > 0 ? 0.6 : 1, 10, dt)
+    v.root.scale.setScalar(size)
     // Align to the ground normal (pitch/roll), smoothed.
     const n = k.groundNormal
     const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw))

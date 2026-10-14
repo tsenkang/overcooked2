@@ -2,6 +2,22 @@ import type { Audio } from '../engine/audio'
 
 /** Every sound effect in the game, synthesized from oscillators and filtered noise. */
 export function registerSounds(a: Audio): void {
+  a.register('boom', s => {
+    s.noise(0.7, 0.5, 'lowpass', 900, 120, 0, 0.8)
+    s.tone(140, 40, 0.6, 'sawtooth', 0.2)
+  })
+  a.register('zap', s => {
+    s.noise(0.35, 0.3, 'bandpass', 5000, 1500, 0, 2)
+    s.tone(1800, 200, 0.4, 'square', 0.1)
+    s.tone(2400, 300, 0.3, 'sawtooth', 0.06, 0.08)
+  })
+  a.register('star', s => {
+    for (const [i, f] of [523, 659, 784, 1047, 1319].entries()) s.tone(f, f, 0.1, 'square', 0.09, i * 0.06)
+  })
+  a.register('wheel', s => {
+    s.tone(220, 440, 0.18, 'square', 0.12)
+    s.noise(0.2, 0.15, 'bandpass', 900, 400, 0.02, 1)
+  })
   a.register('uiMove', s => s.tone(880, 1100, 0.05, 'triangle', 0.12))
   a.register('uiSelect', s => {
     s.tone(660, 990, 0.08, 'square', 0.1)

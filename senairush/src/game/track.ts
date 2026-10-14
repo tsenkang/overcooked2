@@ -12,7 +12,10 @@ import { CONFIG } from './config'
 // [x, z, y]
 export const MAIN_POINTS: [number, number, number][] = [
   [-40, 0, 0], [30, 0, 0], [75, -10, 0], [98, -45, 0.5], [95, -90, 1], [70, -118, 1], [35, -120, 1], [12, -100, 1.5], [10, -70, 2],
-  [-10, -48, 2.5], [-40, -45, 3], [-62, -65, 5], [-72, -100, 7.5], [-80, -140, 4], [-100, -165, 1.5], [-135, -165, 1], [-155, -135, 1],
+  [-10, -48, 2.5], [-40, -45, 3], [-62, -65, 5], [-72, -100, 7.5], [-80, -140, 4], [-100, -165, 1.5],
+  // South-west quarry canyon: jump over the ravine → spinning turbines → boost slalom.
+  [-98, -205, 2], [-118, -250, 4], [-165, -280, 2.5], [-220, -272, 3], [-255, -232, 2], [-258, -182, 1.5], [-228, -150, 1], [-188, -150, 1],
+  [-155, -135, 1],
   [-150, -90, 0.5], [-128, -45, 0],
   // North loop: hill climb → plateau jump → high bridge over the lake → chicane → workshop tunnel
   // with the stamping presses → wide U-turn back onto the start straight.
@@ -35,6 +38,8 @@ export type Pad = { path: PathId; s: number; lateral: number; length: number; wi
 export type Ramp = { s: number; length: number; width: number; lip: number }
 /** Workshop stamping press: slams onto the road on a cycle and squashes whoever is under it. */
 export type Press = { s: number; lateral: number; size: number; period: number; phase: number }
+/** Quarry turbine: a bar spinning flat across the road around a post in the middle. */
+export type Spinner = { s: number; radius: number; speed: number; phase: number }
 export type ItemSpot = { pos: THREE.Vector3; path: PathId; mainS: number }
 
 export type Loc = {
@@ -73,6 +78,10 @@ export class Track {
   readonly ramps: Ramp[] = []
   readonly itemSpots: ItemSpot[] = []
   readonly presses: Press[] = []
+  readonly spinners: Spinner[] = []
+  /** Main-loop s-ranges with no road at all (the ravine jump). */
+  readonly gaps: { from: number; to: number }[] = []
+  private readonly spinnerViews: THREE.Object3D[] = []
   /** Main-loop s-range carried by the bridge (no ground underneath). */
   readonly bridge: { from: number; to: number }
   /** Main-loop s-range under the workshop roof. */
@@ -137,6 +146,19 @@ export class Track {
       { f: 0.75, lateral: 0, phase: 0.66 },
     ].forEach(p => this.presses.push({ s: t0 + span * p.f, lateral: p.lateral, size: 5.2, period: 3.2, phase: p.phase }))
     this.pads.push({ path: 'main', s: t1 + 6, lateral: 0, length: 5, width: 5 })
+    // Quarry canyon: boost pad → ramp → 10 m ravine → landing.
+    const jump = this.main.closest(new THREE.Vector3(-138, 0, -263)).s
+    this.pads.push({ path: 'main', s: jump - 16, lateral: 0, length: 6, width: 8 })
+    this.ramps.push({ s: jump, length: 10, width: HALF_WIDTH * 2, lip: 1.9 })
+    this.gaps.push({ from: jump + 0.5, to: jump + 10.5 })
+    // Two turbines on the canyon's west wall, turning opposite ways.
+    const t = sAt(-257, -205)
+    // Bars stop 3 m short of each wall: hug the edge or time the gap.
+    this.spinners.push({ s: t - 14, radius: 5, speed: 1.1, phase: 0 })
+    this.spinners.push({ s: t + 16, radius: 5, speed: -1.25, phase: 1.2 })
+    // Boost slalom along the canyon exit.
+    const sl = sAt(-226, -150)
+    ;[-4, 4, -4].forEach((lat, i) => this.pads.push({ path: 'main', s: sl + i * 11, lateral: lat, length: 5, width: 4.2 }))
 
     const row = (s: number, lats = [-5.4, -1.8, 1.8, 5.4]) => {
       for (const lat of lats) this.itemSpots.push({ pos: this.main.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'main', mainS: this.main.wrap(s) })
@@ -147,6 +169,8 @@ export class Track {
     row(sAt(-122, 79))
     row(sAt(30, 39))
     row(sAt(-112, 30))
+    row(sAt(-100, -222))
+    row(sAt(-250, -168))
     for (const lat of [-1.6, 1.6]) {
       const s = this.short.length * 0.83
       this.itemSpots.push({ pos: this.short.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'short', mainS: this.mapShort(s) })
@@ -159,6 +183,7 @@ export class Track {
     this.buildRamps()
     this.buildBridge()
     this.buildWorkshop()
+    this.buildSpinners()
     this.buildStartLine()
     const archS = crest - 10
     this.landmarks = { arch: this.main.pointAt(archS), archYaw: this.main.yawAt(archS), ramp: this.main.pointAt(this.ramps[0].s) }
@@ -222,6 +247,13 @@ export class Track {
     const pos = spline.pointAt(s, THREE.MathUtils.clamp(loc.lateral * 0.3, -2, 2))
     // Keep away from the ramp lip.
     for (const r of this.ramps) if (loc.path === 'main' && Math.abs(this.main.delta(r.s, s)) < r.length + 3) pos.copy(this.main.pointAt(r.s - r.length - 4, 4))
+    // Never put anyone back over the ravine: drop them before the run-up instead.
+    for (const g of this.gaps) {
+      if (loc.path === 'main' && this.main.delta(g.from - 22, s) > 0 && this.main.delta(s, g.to + 2) > 0) {
+        pos.copy(this.main.pointAt(g.from - 24, 0))
+        return { pos, yaw: this.main.yawAt(g.from - 24) }
+      }
+    }
     return { pos, yaw: spline.yawAt(s) }
   }
 
@@ -251,6 +283,7 @@ export class Track {
   updateVisuals(time: number): void {
     this.chevron.offset.y = -time * 1.6
     for (const m of this.padMeshes) (m.material as THREE.MeshBasicMaterial).color.setScalar(0.85 + Math.sin(time * 8) * 0.15)
+    this.spinners.forEach((sp, i) => (this.spinnerViews[i].rotation.y = this.spinnerAngle(sp, time)))
     this.presses.forEach((p, i) => {
       const v = this.pressViews[i]
       const lift = this.pressLift(p, time)
@@ -292,6 +325,73 @@ export class Track {
     return null
   }
 
+  // ─── quarry turbines ─────────────────────────────────────────────────
+
+  spinnerAngle(sp: Spinner, time: number): number {
+    return sp.phase + time * sp.speed
+  }
+
+  /** The turbine whose bar is sweeping through this spot, if any. */
+  spinnerAt(pos: THREE.Vector3, loc: Loc, time: number): Spinner | null {
+    if (loc.path !== 'main') return null
+    for (const sp of this.spinners) {
+      if (Math.abs(this.main.delta(sp.s, loc.s)) > sp.radius + 1) continue
+      const c = this.main.pointAt(sp.s)
+      const dx = pos.x - c.x
+      const dz = pos.z - c.z
+      const r = Math.hypot(dx, dz)
+      if (r > sp.radius + 0.6 || r < 1.6) continue
+      // Distance from the bar (a full line through the post, both arms).
+      const a = this.spinnerAngle(sp, time)
+      const off = Math.abs(dx * Math.cos(a) - dz * Math.sin(a))
+      if (off < 1.15) return sp
+    }
+    return null
+  }
+
+  /** Points along the turbine bars, for the AI to steer around. */
+  spinnerObstacles(time: number): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
+    const out: { position: THREE.Vector3; radius: number; hazard: boolean }[] = []
+    for (const sp of this.spinners) {
+      const c = this.main.pointAt(sp.s)
+      const a = this.spinnerAngle(sp, time)
+      for (const k of [-0.8, -0.45, 0.45, 0.8]) out.push({ position: new THREE.Vector3(c.x + Math.sin(a) * sp.radius * k, c.y, c.z + Math.cos(a) * sp.radius * k), radius: 1.4, hazard: true })
+    }
+    return out
+  }
+
+  private buildSpinners(): void {
+    const stripes = hazardTexture()
+    stripes.wrapS = THREE.RepeatWrapping
+    stripes.repeat.set(6, 1)
+    const barMat = new THREE.MeshStandardMaterial({ map: stripes, flatShading: true, roughness: 0.5 })
+    const postMat = new THREE.MeshStandardMaterial({ color: '#1e4d6b', flatShading: true, roughness: 0.5 })
+    const hubMat = new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.4 })
+    const groupsWall = groups(COLLISION.WALL, COLLISION.KART | COLLISION.DEBRIS)
+    for (const sp of this.spinners) {
+      const c = this.main.pointAt(sp.s)
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.4, 4.2, 10), postMat)
+      post.position.copy(c).setY(c.y + 2.1)
+      post.castShadow = true
+      this.group.add(post)
+      // The post is solid; the bar is the hazard.
+      this.physics.addStaticCylinder(c.clone().setY(c.y + 2), 1.25, 6, 0, groupsWall)
+      const rotor = new THREE.Group()
+      rotor.position.copy(c).setY(c.y + 0.95)
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.9, sp.radius * 2), barMat)
+      bar.castShadow = true
+      const hub = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 1.2, 12), hubMat)
+      const caps = [-1, 1].map(k => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 0.6), hubMat)
+        m.position.z = k * sp.radius
+        return m
+      })
+      rotor.add(bar, hub, ...caps)
+      this.group.add(rotor)
+      this.spinnerViews.push(rotor)
+    }
+  }
+
   /** Presses that are down or about to drop, for the AI to steer around. */
   pressObstacles(time: number): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
     const out: { position: THREE.Vector3; radius: number; hazard: boolean }[] = []
@@ -326,11 +426,11 @@ export class Track {
       { a: hw - 0.9, b: hw, color: i => (Math.floor(i / 2) % 2 ? KERB_B : KERB_A), y: 0.03 },
       { a: hw, b: hw + SHOULDER, color: (i, j) => sprinkle(i + 3, j) },
     ]
-    const geo = ribbon(sp, bands, 2, 2)
+    const geo = ribbon(sp, bands, 2, 2, 0, (_p, s) => this.inGap(s))
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 }))
     mesh.receiveShadow = true
     this.group.add(mesh)
-    this.addGroundCollider(sp, WALL + 3)
+    this.addGroundCollider(sp, WALL + 3, 0, s => this.inGap(s))
   }
 
   private buildShortcut(): void {
@@ -371,7 +471,12 @@ export class Track {
     this.group.add(puffs)
   }
 
-  private addGroundCollider(sp: TrackSpline, half: number, yOff = 0): void {
+  /** Inside a ravine (no road, no ground). */
+  inGap(s: number): boolean {
+    return this.gaps.some(g => this.main.delta(g.from, s) > 0 && this.main.delta(s, g.to) > 0)
+  }
+
+  private addGroundCollider(sp: TrackSpline, half: number, yOff = 0, skip?: (s: number) => boolean): void {
     const verts: number[] = []
     const idx: number[] = []
     const lats = [-half, -half * 0.5, 0, half * 0.5, half]
@@ -380,6 +485,7 @@ export class Track {
     const rows = sp.closed ? n : n - 1
     const w = lats.length
     for (let i = 0; i < rows; i += 1) {
+      if (skip && (skip(sp.samples[i].s) || skip(sp.samples[(i + 1) % n].s))) continue
       const a = i * w
       const b = ((i + 1) % n) * w
       for (let j = 0; j < w - 1; j += 1) idx.push(a + j, b + j, a + j + 1, a + j + 1, b + j, b + j + 1)
@@ -707,7 +813,7 @@ function ribbon(
   stride: number,
   subdiv: number,
   yOff = 0,
-  skip?: (p: THREE.Vector3) => boolean,
+  skip?: (p: THREE.Vector3, s: number) => boolean,
 ): THREE.BufferGeometry {
   const pos: number[] = []
   const col: number[] = []
@@ -717,7 +823,7 @@ function ribbon(
   for (let i = 0; i < rows; i += stride) {
     const A = sp.samples[i]
     const B = sp.samples[Math.min(sp.closed ? (i + stride) % n : i + stride, n - 1)]
-    if (skip && skip(A.pos) && skip(B.pos)) continue
+    if (skip && skip(A.pos, A.s) && skip(B.pos, B.s)) continue
     bands.forEach((band, bi) => {
       for (let j = 0; j < subdiv; j += 1) {
         const l0 = band.a + ((band.b - band.a) * j) / subdiv

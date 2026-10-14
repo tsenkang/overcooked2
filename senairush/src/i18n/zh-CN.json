@@ -161,5 +161,18 @@
   "dev.keys2": "键盘 · IJKL",
   "dev.keys3": "键盘 · 小键盘",
   "dev.pad": "手柄 {n}",
-  "tutorial.multiTip": "按 Esc / P 或 Start 为所有人暂停。"
+  "tutorial.multiTip": "按 Esc / P 或 Start 为所有人暂停。",
+  "item.triple": "三连辣椒",
+  "item.star": "涡轮之星",
+  "item.bolt": "全场停电",
+  "item.bomb": "车间炸弹",
+  "item.wheel": "涡轮轮胎",
+  "item.triple.desc": "连续三次辣椒加速。",
+  "item.star.desc": "无敌且更快，撞开对手。",
+  "item.bolt.desc": "所有对手缩小并减速。",
+  "item.bomb.desc": "向前抛出，炸飞附近的所有人。",
+  "item.wheel.desc": "轮胎沿着你的车道直线滚动。",
+  "toast.bombHit": "轰！炸中了{name}！",
+  "toast.wheelHit": "轮胎击中了{name}！",
+  "toast.turbine": "被涡轮扫飞了！"
 }

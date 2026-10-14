@@ -161,5 +161,18 @@
   "dev.keys2": "Keyboard · IJKL",
   "dev.keys3": "Keyboard · numpad",
   "dev.pad": "Gamepad {n}",
-  "tutorial.multiTip": "Esc / P or Start pauses for everyone."
+  "tutorial.multiTip": "Esc / P or Start pauses for everyone.",
+  "item.triple": "Triple Pepper",
+  "item.star": "Turbo Star",
+  "item.bolt": "Power Outage",
+  "item.bomb": "Workshop Bomb",
+  "item.wheel": "Turbo Tyre",
+  "item.triple.desc": "Three Pepper Blasts in a row.",
+  "item.star.desc": "Invincible and faster; rivals bounce off you.",
+  "item.bolt.desc": "Every rival shrinks and slows down.",
+  "item.bomb.desc": "Lob it ahead; it blows up anyone nearby.",
+  "item.wheel.desc": "A tyre that rolls straight down your lane.",
+  "toast.bombHit": "Boom! You got {name}!",
+  "toast.wheelHit": "Tyre hit on {name}!",
+  "toast.turbine": "Swatted by the turbine!"
 }

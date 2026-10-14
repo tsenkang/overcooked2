@@ -63,6 +63,18 @@ export const DEFAULT_CONFIG = {
     beeSpin: 1.25,
     /** Distance at which a bee stops following the track and dives at its target. */
     beeHoming: 22,
+    /** Turbo Star: invincible, faster, knocks rivals aside. */
+    starSeconds: 7,
+    starPower: 1.17,
+    /** Power Outage: every rival shrinks and slows. */
+    boltShrink: 4,
+    boltSlow: 0.72,
+    /** Workshop Bomb: lobbed ahead, blows up on a fuse or on contact. */
+    bombFuse: 2.4,
+    bombRadius: 7,
+    /** Turbo Tyre: rolls straight down the track in its lane. */
+    wheelSpeed: 46,
+    wheelLife: 4.5,
   },
   ai: {
     /** Catch-up: top-speed multiplier range relative to the player's track distance. */
@@ -86,8 +98,8 @@ type MutableConfig<T> = { -readonly [K in keyof T]: T[K] extends readonly number
 /** Active values are intentionally separate from immutable source defaults for Tweak Reset/Save. */
 export const CONFIG: MutableConfig<typeof DEFAULT_CONFIG> = structuredClone(DEFAULT_CONFIG)
 
-export type ItemKind = 'shield' | 'pepper' | 'taffy' | 'bee'
-export const ITEM_KINDS: ItemKind[] = ['shield', 'pepper', 'taffy', 'bee']
+export type ItemKind = 'shield' | 'pepper' | 'taffy' | 'bee' | 'triple' | 'star' | 'bolt' | 'bomb' | 'wheel'
+export const ITEM_KINDS: ItemKind[] = ['shield', 'pepper', 'taffy', 'bee', 'triple', 'star', 'bolt', 'bomb', 'wheel']
 
 /** Character stats on a 1..5 scale; mapped to small spec deltas so every pick is viable. */
 export type Stats = { speed: number; accel: number; handling: number; weight: number }

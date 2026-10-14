@@ -133,6 +133,7 @@ async function boot(): Promise<void> {
       itemReady: kind => ui.itemReady(kind),
       toast: (key, vars, slot) => ui.toast(key, vars, slot),
       finished: result => ui.showResults(result),
+      flash: () => ui.flash(),
     },
     save.data.quality,
   )

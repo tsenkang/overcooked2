@@ -48,6 +48,27 @@ pnpm smoke    # after build: headless browser playthrough + screenshots in shots
 - **Colliders come from the helpers** in `physics.ts` with the same sizes as the meshes.
 - Keep `npm run build` within budget (`scripts/check-size.mjs`) and `npm run smoke` green.
 
+## Pista e poderes
+
+A volta tem ~1,7 km com vários trechos diferentes: campus e atalho da oficina, subida até o platô
+com rampa de salto, ponte alta sobre o lago, **Oficina de Prensas** (prensas que descem e esmagam),
+retorno em U e o **cânion da pedreira** no sudoeste: turbo + rampa para **pular um abismo** com rio
+no fundo, **turbinas gigantes** girando na pista (fique na borda ou acerte o tempo) e um slalom de turbos.
+
+| Poder | O que faz |
+| --- | --- |
+| Bubble Shield | Bloqueia um golpe |
+| Pepper Blast | Turbo |
+| **Triple Pepper** | 3 turbos seguidos |
+| Taffy Trap | Gosma que gruda deixada para trás |
+| Homing Bee | Persegue quem está logo à frente |
+| **Turbo Tyre** | Pneu que rola reto pela sua faixa e derruba quem acertar |
+| **Workshop Bomb** | Bomba arremessada à frente; explode e joga longe quem estiver perto |
+| **Turbo Star** | 7 s invencível e mais rápido; quem encostar é jogado para o lado |
+| **Power Outage** | Todos os rivais encolhem e ficam lentos por 4 s |
+
+Os líderes recebem mais itens de defesa; Turbo Star e Power Outage só aparecem do meio do pelotão para trás.
+
 ## Multijogador local (até 4, tela dividida)
 
 1. Na escolha de piloto, aperte o botão **"1 player"** até chegar no número de jogadores (2, 3 ou 4) e

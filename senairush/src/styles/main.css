@@ -1327,6 +1327,33 @@ input[type='range']:focus {
 .vignette[data-kind='blocked'] {
   background: radial-gradient(ellipse at center, transparent 45%, rgba(140, 230, 255, 0.6) 100%);
 }
+.flash {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 30%, #ffffff 0%, #fff6b0 45%, rgba(255, 224, 102, 0.6) 100%);
+}
+.flash.on {
+  animation: zapflash 0.6s ease-out forwards;
+}
+@keyframes zapflash {
+  0%, 30% {
+    opacity: 0.9;
+  }
+  15% {
+    opacity: 0.2;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .flash.on {
+    animation-duration: 0.3s;
+  }
+}
 .vignette.on {
   animation: vig 0.7s ease-out forwards;
 }

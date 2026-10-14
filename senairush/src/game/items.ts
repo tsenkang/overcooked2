@@ -16,11 +16,14 @@ import type { Track } from './track'
  */
 export type ItemHooks = {
   sfx(name: string, at: THREE.Vector3, gain?: number): void
-  hit(victim: Racer, by: Racer | null, kind: 'bee' | 'taffy'): void
+  hit(victim: Racer, by: Racer | null, kind: HitKind): void
   blocked(victim: Racer): void
   got(racer: Racer): void
 }
 
+export type HitKind = 'bee' | 'taffy' | 'bomb' | 'wheel' | 'bolt'
+type Bomb = { mesh: THREE.Group; owner: Racer; pos: THREE.Vector3; vel: THREE.Vector3; fuse: number; landed: boolean; spark: THREE.Mesh }
+type Wheel = { mesh: THREE.Group; owner: Racer; s: number; lateral: number; life: number; age: number; spin: number }
 type Crate = { mesh: THREE.Group; pos: THREE.Vector3; respawn: number; spin: number }
 type Shard = { mesh: THREE.Mesh; body: RAPIER.RigidBody; life: number }
 type Trap = { mesh: THREE.Group; body: RAPIER.RigidBody; owner: Racer; life: number; armed: number; wobble: number }
@@ -48,6 +51,8 @@ export class Items {
   readonly crates: Crate[] = []
   readonly traps: Trap[] = []
   readonly bees: Bee[] = []
+  readonly bombs: Bomb[] = []
+  readonly wheels: Wheel[] = []
   private readonly shards: Shard[] = []
   private readonly group = new THREE.Group()
   private readonly crateMats: THREE.MeshStandardMaterial[] = []
@@ -83,6 +88,10 @@ export class Items {
     this.traps.length = 0
     for (const b of this.bees) this.group.remove(b.mesh, b.trail.mesh)
     this.bees.length = 0
+    for (const b of this.bombs) this.group.remove(b.mesh)
+    this.bombs.length = 0
+    for (const w of this.wheels) this.group.remove(w.mesh)
+    this.wheels.length = 0
     for (const s of this.shards) this.removeShard(s)
     this.shards.length = 0
   }
@@ -120,11 +129,14 @@ export class Items {
         r.roulette -= dt
         if (r.roulette <= 0) {
           r.item = r.rouletteItem
+          r.charges = r.item === 'triple' ? 3 : 0
           r.rouletteItem = null
           r.aiItemDelay = 0.6 + Math.random() * 2.2
         }
       }
       r.shieldTime = Math.max(0, r.shieldTime - dt)
+      r.starTime = Math.max(0, r.starTime - dt)
+      r.shrinkTime = Math.max(0, r.shrinkTime - dt)
       r.goo = Math.max(0, r.goo - dt)
       r.incomingBee = 0
     }
@@ -149,7 +161,9 @@ export class Items {
           const at = new THREE.Vector3(tp.x, tp.y, tp.z)
           this.fx.goo(at)
           this.hooks.sfx('taffyHit', at)
-          if (r.shielded) {
+          if (r.invincible) {
+            // The star just ploughs through.
+          } else if (r.shielded) {
             r.shieldTime = 0
             this.fx.bubblePop(r.position)
             this.hooks.blocked(r)
@@ -202,7 +216,9 @@ export class Items {
       if (hit && target) {
         this.fx.pollen(target.position)
         this.hooks.sfx('beeHit', target.position)
-        if (target.shielded) {
+        if (target.invincible) {
+          // Bounces off the star.
+        } else if (target.shielded) {
           target.shieldTime = 0
           this.fx.bubblePop(target.position)
           this.hooks.blocked(target)
@@ -217,6 +233,8 @@ export class Items {
         this.bees.splice(i, 1)
       }
     }
+    this.stepBombs(dt, racers)
+    this.stepWheels(dt, racers)
     // Shards.
     for (let i = this.shards.length - 1; i >= 0; i -= 1) {
       const s = this.shards[i]
@@ -255,6 +273,20 @@ export class Items {
       const w = 1 + Math.sin(time * 5 + p.x) * 0.05
       t.mesh.scale.set(w, 1 / w, w)
     }
+    for (const b of this.bombs) {
+      b.mesh.position.copy(b.pos)
+      if (!b.landed) b.mesh.rotation.x += dt * 8
+      // The fuse flashes faster as it burns down.
+      b.spark.visible = Math.sin(time * (8 + (CONFIG.items.bombFuse - b.fuse) * 14)) > 0
+      const swell = b.fuse < 0.6 ? 1 + (0.6 - b.fuse) * 0.6 : 1
+      b.mesh.scale.setScalar(swell)
+    }
+    for (const w of this.wheels) {
+      const p = this.track.main.pointAt(w.s, w.lateral)
+      w.mesh.position.set(p.x, p.y + 0.75 + Math.abs(Math.sin(w.age * 9)) * 0.25, p.z)
+      w.mesh.rotation.set(0, this.track.main.yawAt(w.s), 0)
+      ;(w.mesh.children[0] as THREE.Object3D).rotation.x = w.spin
+    }
     for (const b of this.bees) {
       b.mesh.position.copy(b.pos)
       const ahead = b.target ? b.target.position : this.track.main.pointAt(b.s + 5)
@@ -279,6 +311,15 @@ export class Items {
         this.fx.ring(r.position, '#9ff4ff', 18, 6, 1)
         this.hooks.sfx('shieldUp', r.position)
         break
+      case 'triple':
+        // Each charge is a Pepper Blast; the item stays until the last one.
+        r.charges = Math.max(0, r.charges - 1)
+        if (r.charges > 0) r.item = 'triple'
+        k.boost(CONFIG.items.pepperSeconds, CONFIG.items.pepperPower)
+        k.cancelDrift()
+        this.fx.ring(r.position.clone().addScaledVector(fwd, -1.5), '#ff5a36', 16, 7, 0.5)
+        this.hooks.sfx('pepper', r.position)
+        break
       case 'pepper':
         k.boost(CONFIG.items.pepperSeconds, CONFIG.items.pepperPower)
         k.cancelDrift()
@@ -296,8 +337,166 @@ export class Items {
         this.hooks.sfx('beeLaunch', r.position)
         break
       }
+      case 'star':
+        r.starTime = CONFIG.items.starSeconds
+        k.boost(CONFIG.items.starSeconds, CONFIG.items.starPower)
+        this.fx.confetti(r.position.clone().setY(r.position.y + 1.5), 30, 1)
+        this.hooks.sfx('star', r.position)
+        break
+      case 'bolt':
+        this.powerOutage(r, ordered)
+        break
+      case 'bomb':
+        this.throwBomb(r)
+        this.hooks.sfx('taffyDrop', r.position)
+        break
+      case 'wheel':
+        this.launchWheel(r)
+        this.hooks.sfx('wheel', r.position)
+        break
     }
     return kind
+  }
+
+  /** Bomb or tyre heading for `r` in the next few metres (AI dodging, warnings). */
+  threats(): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
+    const out = this.bombs.filter(b => b.landed).map(b => ({ position: b.pos.clone(), radius: 2.5, hazard: true }))
+    for (const w of this.wheels) out.push({ position: this.track.main.pointAt(w.s, w.lateral), radius: 1.6, hazard: true })
+    return out
+  }
+
+  /** Hurt `victim` unless the star or a shield saves them. Returns true when it landed. */
+  private strike(victim: Racer, by: Racer | null, kind: HitKind, spin: number, lift: number, push?: THREE.Vector3): boolean {
+    if (victim.respawnTime > 0 || victim.invincible) return false
+    if (victim.shielded) {
+      victim.shieldTime = 0
+      this.fx.bubblePop(victim.position)
+      this.hooks.blocked(victim)
+      return false
+    }
+    victim.kart.spinOut(spin, 0.2)
+    const v = push ? push.clone() : new THREE.Vector3((Math.random() - 0.5) * 4, 0, (Math.random() - 0.5) * 4)
+    v.y = lift
+    victim.kart.impulse(v)
+    victim.bounce(1.8)
+    this.hooks.hit(victim, by === victim ? null : by, kind)
+    return true
+  }
+
+  /** Power Outage: every rival (not the user) shrinks, slows and loses their grip for a moment. */
+  private powerOutage(r: Racer, ordered: Racer[]): void {
+    this.hooks.sfx('zap', r.position)
+    for (const o of ordered) {
+      if (o === r || o.finished) continue
+      this.fx.ring(o.position, '#ffe066', 14, 8, 1.5)
+      if (o.invincible) continue
+      if (o.shielded) {
+        o.shieldTime = 0
+        this.fx.bubblePop(o.position)
+        this.hooks.blocked(o)
+        continue
+      }
+      o.shrinkTime = CONFIG.items.boltShrink
+      o.kart.spinOut(0.6, 0.5)
+      o.item = o.item === 'triple' ? null : o.item
+      this.hooks.hit(o, r, 'bolt')
+    }
+  }
+
+  private throwBomb(r: Racer): void {
+    const k = r.kart
+    const fwd = k.forward.clone().setY(0).normalize()
+    const g = new THREE.Group()
+    const p = new Parts()
+    p.add(new THREE.IcosahedronGeometry(0.7, 1), '#202833')
+    p.add(new THREE.CylinderGeometry(0.72, 0.72, 0.18, 12), '#ffc400', [0, 0, 0], [Math.PI / 2, 0, 0])
+    p.add(new THREE.CylinderGeometry(0.18, 0.22, 0.35, 8), '#8a96a3', [0, 0.75, 0])
+    p.add(new THREE.IcosahedronGeometry(0.16, 0), '#ffffff', [0.3, 0.3, 0.55])
+    g.add(p.mesh())
+    const spark = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 0), new THREE.MeshBasicMaterial({ color: '#ff7b3d', toneMapped: false }))
+    spark.position.y = 1.02
+    g.add(spark)
+    const pos = k.position.clone().addScaledVector(fwd, 2.2).add(new THREE.Vector3(0, 1.4, 0))
+    const vel = fwd.multiplyScalar(Math.max(18, k.speed + 12)).add(new THREE.Vector3(0, 9, 0))
+    g.position.copy(pos)
+    this.group.add(g)
+    this.bombs.push({ mesh: g, owner: r, pos, vel, fuse: CONFIG.items.bombFuse, landed: false, spark })
+  }
+
+  private stepBombs(dt: number, racers: Racer[]): void {
+    for (let i = this.bombs.length - 1; i >= 0; i -= 1) {
+      const b = this.bombs[i]
+      b.fuse -= dt
+      if (!b.landed) {
+        b.vel.y -= 26 * dt
+        b.pos.addScaledVector(b.vel, dt)
+        const ground = this.track.main.closest(b.pos).height + 0.7
+        if (b.pos.y <= ground && b.vel.y < 0) {
+          b.pos.y = ground
+          b.landed = true
+          b.vel.set(0, 0, 0)
+        }
+      }
+      const touched = racers.some(r => r !== b.owner && r.respawnTime <= 0 && r.position.distanceTo(b.pos) < 2.2)
+      if (b.fuse > 0 && !touched) continue
+      // Boom.
+      this.fx.ring(b.pos, '#ff7b3d', 28, 13, 0.6)
+      this.fx.ring(b.pos, '#ffe066', 18, 8, 1.4)
+      this.fx.confetti(b.pos, 24, 1.3, ['#ff7b3d', '#ffc400', '#202833', '#ffffff'])
+      this.hooks.sfx('boom', b.pos, 1.4)
+      for (const r of racers) {
+        const d = r.position.distanceTo(b.pos)
+        if (d > CONFIG.items.bombRadius) continue
+        const away = r.position.clone().sub(b.pos).setY(0).normalize().multiplyScalar(7)
+        this.strike(r, b.owner, 'bomb', 1.2, 10, away)
+      }
+      this.group.remove(b.mesh)
+      this.bombs.splice(i, 1)
+    }
+  }
+
+  private launchWheel(r: Racer): void {
+    const g = new THREE.Group()
+    const p = new Parts()
+    p.add(new THREE.TorusGeometry(0.6, 0.28, 8, 16), '#1d232b', [0, 0, 0], [0, Math.PI / 2, 0])
+    p.add(new THREE.CylinderGeometry(0.36, 0.36, 0.3, 10), '#ffc400', [0, 0, 0], [0, 0, Math.PI / 2])
+    p.add(new THREE.CylinderGeometry(0.12, 0.12, 0.42, 6), '#e30613', [0, 0, 0], [0, 0, Math.PI / 2])
+    const tyre = new THREE.Group()
+    tyre.add(p.mesh())
+    g.add(tyre)
+    g.scale.setScalar(1.25)
+    this.group.add(g)
+    const loc = r.tracker.loc
+    this.wheels.push({ mesh: g, owner: r, s: loc.mainS + 3, lateral: loc.path === 'main' ? THREE.MathUtils.clamp(loc.lateral, -6, 6) : 0, life: CONFIG.items.wheelLife, age: 0, spin: 0 })
+  }
+
+  private stepWheels(dt: number, racers: Racer[]): void {
+    for (let i = this.wheels.length - 1; i >= 0; i -= 1) {
+      const w = this.wheels[i]
+      w.life -= dt
+      w.age += dt
+      w.s = this.track.main.wrap(w.s + CONFIG.items.wheelSpeed * dt)
+      w.spin += (CONFIG.items.wheelSpeed / 0.75) * dt
+      const at = this.track.main.pointAt(w.s, w.lateral).setY(this.track.main.pointAt(w.s).y + 0.75)
+      let done = w.life <= 0
+      if (!done) {
+        for (const r of racers) {
+          if ((r === w.owner && w.age < 0.6) || r.respawnTime > 0) continue
+          if (r.position.distanceTo(at) < 1.9) {
+            this.fx.ring(at, '#ffffff', 14, 7)
+            this.hooks.sfx('bump', at)
+            this.strike(r, w.owner, 'wheel', 0.9, 5)
+            done = true
+            break
+          }
+        }
+      }
+      if (done) {
+        if (w.life <= 0) this.fx.ring(at, '#ffc400', 10, 4)
+        this.group.remove(w.mesh)
+        this.wheels.splice(i, 1)
+      }
+    }
   }
 
   /** Bee that is chasing `r`, if any (for UI warnings / AI shield timing). */
@@ -306,10 +505,12 @@ export class Items {
   }
 
   obstacles(): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
-    return this.traps.map(t => {
-      const p = t.body.translation()
-      return { position: new THREE.Vector3(p.x, p.y, p.z), radius: 1.3, hazard: true }
-    })
+    return this.traps
+      .map(t => {
+        const p = t.body.translation()
+        return { position: new THREE.Vector3(p.x, p.y, p.z), radius: 1.3, hazard: true }
+      })
+      .concat(this.threats())
   }
 
   private breakCrate(c: Crate, r: Racer): void {

@@ -10,7 +10,7 @@ import { ROSTER, characterById, type Character } from './characters'
 import { CONFIG, type ItemKind } from './config'
 import { tuning } from './tuning'
 import { Fx } from './fx'
-import { Items } from './items'
+import { Items, type HitKind } from './items'
 import { buildKart, type KartView } from './kartModel'
 import { RACE_SONG, RESULTS_SONG, TITLE_SONG } from './music'
 import { Racer } from './racer'
@@ -31,6 +31,8 @@ export type HudState = {
   time: number
   lastLap: number
   item: ItemKind | null
+  /** Uses left on Triple Pepper. */
+  charges: number
   rolling: boolean
   shield: number
   driftTier: number
@@ -69,6 +71,8 @@ export type GameHooks = {
   itemReady(kind: ItemKind): void
   toast(key: string, vars?: Record<string, string | number>, slot?: PlayerSlot): void
   finished(result: RaceResult): void
+  /** Whole-screen lightning flash (Power Outage). */
+  flash(): void
 }
 
 const SKILLS = [0.92, 0.84, 0.76, 0.68, 0.6]
@@ -139,7 +143,14 @@ export class Game {
     this.fx = new Fx(this.scene)
     this.setQuality(quality)
     this.items = new Items(this.scene, this.physics, this.track, this.fx, {
-      sfx: (name, at, gain) => this.sfxAt(name, at, gain),
+      sfx: (name, at, gain) => {
+        if (name === 'zap') {
+          this.hooks.flash()
+          this.audio.play('zap')
+          return
+        }
+        this.sfxAt(name, at, gain)
+      },
       hit: (victim, by, kind) => this.onHit(victim, by, kind),
       blocked: victim => {
         this.sfxAt('shieldPop', victim.position)
@@ -360,7 +371,7 @@ export class Game {
     if (this.mode === 'playing' && this.phase === 'countdown') this.stepCountdown()
     if (racing) this.raceTime += dt
 
-    const obstacles = [...this.items.obstacles(), ...this.track.pressObstacles(this.time)]
+    const obstacles = [...this.items.obstacles(), ...this.track.pressObstacles(this.time), ...this.track.spinnerObstacles(this.time)]
     for (const r of this.racers) {
       if (r.respawnTime > 0) {
         r.respawnTime -= dt
@@ -397,6 +408,7 @@ export class Game {
         this.driveAi(r, obstacles, dt)
       }
       if (r.isPlayer && !r.finished) r.kart.speedScale = 1
+      if (r.shrinkTime > 0) r.kart.speedScale *= CONFIG.items.boltSlow
       r.kart.step(dt, r.input, r.events)
     }
     if (!racing) this.input.consume('drift')
@@ -556,6 +568,23 @@ export class Game {
       case 'shield':
         use = !!this.items.beeFor(r) || rand < dt * 0.25
         break
+      case 'star':
+        use = r.kart.speed > 12 || rand < dt * 0.3
+        break
+      case 'bolt':
+        use = r.place > 2 || rand < dt * 0.2
+        break
+      case 'bomb':
+      case 'wheel': {
+        // Something in front, close and roughly in our lane.
+        const idx = this.ordered.indexOf(r)
+        const ahead = idx > 0 ? this.ordered[idx - 1] : null
+        const gap = ahead ? ahead.progress.u - r.progress.u : Infinity
+        const lane = ahead ? Math.abs(ahead.tracker.loc.lateral - loc.lateral) : Infinity
+        use = (gap > 4 && gap < (r.item === 'bomb' ? 32 : 45) && lane < (r.item === 'bomb' ? 6 : 2.8)) || rand < dt * 0.06
+        break
+      }
+      case 'triple':
       case 'pepper': {
         const spline = loc.path === 'main' ? this.track.main : this.track.short
         const straight = spline.maxCurvature(loc.s, 40, 4) < 0.025
@@ -678,12 +707,12 @@ export class Game {
         const b = this.racers[j]
         const d = a.position.distanceTo(b.position)
         if (d > 1.9) continue
-        const power = (r: Racer) => (r.shielded ? 1 : 0) + (r.kart.boostPower > 1.15 && r.kart.boostTime > 0 ? 1 : 0)
+        const power = (r: Racer) => (r.invincible ? 3 : 0) + (r.shielded ? 1 : 0) + (r.kart.boostPower > 1.15 && r.kart.boostTime > 0 ? 1 : 0)
         const pa = power(a)
         const pb = power(b)
         if (pa === pb) continue
         const [strong, weak] = pa > pb ? [a, b] : [b, a]
-        if (weak.kart.spinTime > 0 || weak.shielded) continue
+        if (weak.kart.spinTime > 0 || weak.shielded || weak.invincible) continue
         const dir = weak.position.clone().sub(strong.position).setY(0).normalize()
         weak.kart.impulse(dir.multiplyScalar(9).add(new THREE.Vector3(0, 4, 0)))
         weak.kart.spinOut(0.7, 0.55)
@@ -705,8 +734,36 @@ export class Game {
       return
     }
     this.squashed.delete(r)
-    if (r.respawnTime > 0 || !r.kart.grounded || !this.track.pressAt(loc, this.time)) return
+    if (r.respawnTime > 0 || r.invincible) return
+    const press = r.kart.grounded && this.track.pressAt(loc, this.time)
+    const turbine = !press && this.track.spinnerAt(r.position, loc, this.time)
+    if (!press && !turbine) return
     this.squashed.set(r, 1.6)
+    if (turbine) {
+      // The turbine bar swats the kart sideways.
+      const c = this.track.main.pointAt(turbine.s)
+      const away = r.position.clone().sub(c).setY(0).normalize()
+      if (r.shielded) {
+        r.shieldTime = 0
+        this.sfxAt('shieldPop', r.position)
+        if (r.isPlayer) this.hooks.hurt('blocked', this.slotOf(r))
+        return
+      }
+      r.kart.spinOut(0.9, 0.25)
+      r.kart.impulse(away.multiplyScalar(8).add(new THREE.Vector3(0, 5, 0)))
+      r.bounce(2)
+      this.fx.ring(r.position, '#ffc400', 12, 7)
+      this.sfxAt('bump', r.position)
+      if (r.isPlayer) {
+        const slot = this.slotOf(r)
+        this.hooks.hurt('bee', slot)
+        this.hooks.toast('toast.turbine', {}, slot)
+        this.audio.play('hitMe')
+        this.camFor(r).addTrauma(0.6)
+        this.input.rumble(0.9, 0.6, 220, this.deviceOf(r))
+      }
+      return
+    }
     if (r.shielded) {
       r.shieldTime = 0
       this.sfxAt('shieldPop', r.position)
@@ -727,15 +784,15 @@ export class Game {
     }
   }
 
-  private onHit(victim: Racer, by: Racer | null, kind: 'bee' | 'taffy'): void {
+  private onHit(victim: Racer, by: Racer | null, kind: HitKind): void {
     if (victim.isPlayer) {
-      this.hooks.hurt(kind, this.slotOf(victim))
+      this.hooks.hurt(kind === 'taffy' ? 'taffy' : 'bee', this.slotOf(victim))
       this.audio.play('hitMe')
       this.camFor(victim).addTrauma(0.75)
       this.hitstop = 0.07
       this.input.rumble(1, 0.8, 300, this.deviceOf(victim))
     } else if (by?.isPlayer) {
-      this.hooks.toast(kind === 'bee' ? 'toast.beeHit' : 'toast.taffyHit', { name: `char.${victim.character.id}.name` }, this.slotOf(by))
+      if (kind !== 'bolt') this.hooks.toast(`toast.${kind}Hit`, { name: `char.${victim.character.id}.name` }, this.slotOf(by))
       this.hitstop = 0.04
     }
   }
@@ -916,6 +973,8 @@ export class Game {
       r.animate(alpha, dt, this.time, this.fx, near)
       const blink = r.respawnTime > 0 && Math.floor(this.time * 16) % 2 === 0
       r.view.root.visible = !blink
+      // Turbo Star: rainbow sparks trail the kart.
+      if (r.starTime > 0 && this.mode !== 'paused') this.fx.sparks(r.view.root.position.clone().setY(r.view.root.position.y + 0.8), new THREE.Vector3(0, 1, 0), 1 + (Math.floor(this.time * 10) % 3), 0.7)
       const trick = this.trick.get(r)
       if (trick !== undefined) r.view.body.rotation.z += easeTrick(trick) * Math.PI * 2 * (r.id % 2 ? 1 : -1)
     }
@@ -1001,6 +1060,7 @@ export class Game {
       time: p.finished ? p.progress.finishTime : this.raceTime,
       lastLap: p.progress.lapTimes[p.progress.lapTimes.length - 1] ?? 0,
       item: p.item,
+      charges: p.charges,
       rolling: p.roulette > 0,
       shield: p.shieldTime,
       driftTier: k.driftTier,

@@ -75,10 +75,16 @@ export function standings(list: readonly StandingInput[]): number[] {
 export function itemWeights(place: number, count: number): Record<ItemKind, number> {
   const t = count <= 1 ? 0 : place / (count - 1) // 0 front .. 1 back
   return {
-    shield: 0.42 - 0.3 * t,
-    taffy: 0.42 - 0.3 * t,
-    pepper: 0.1 + 0.32 * t,
-    bee: place === 0 ? 0 : 0.14 + 0.26 * t,
+    shield: 0.32 - 0.22 * t,
+    taffy: 0.32 - 0.22 * t,
+    wheel: 0.2 - 0.06 * t,
+    bomb: 0.08 + 0.06 * t,
+    pepper: 0.08 + 0.18 * t,
+    triple: 0.02 + 0.2 * t,
+    bee: place === 0 ? 0 : 0.12 + 0.18 * t,
+    // The big comeback items only show up in the back half of the pack.
+    star: t > 0.4 ? (t - 0.4) * 0.3 : 0,
+    bolt: t > 0.6 ? (t - 0.6) * 0.32 : 0,
   }
 }
 
