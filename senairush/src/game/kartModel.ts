@@ -72,10 +72,10 @@ let jaoFaceTexture: THREE.Texture | null = null
 export async function preloadFaceAssets(): Promise<void> {
   const loader = new THREE.TextureLoader()
   const [honda, tkz, nicao, jao] = await Promise.all([
-    loader.loadAsync('/assets/honda-face.png'),
-    loader.loadAsync('/assets/tkz-face.png'),
-    loader.loadAsync('/assets/nicao-face.webp'),
-    loader.loadAsync('/assets/jao-face.webp'),
+    loader.loadAsync('./assets/honda-face.png'),
+    loader.loadAsync('./assets/tkz-face.png'),
+    loader.loadAsync('./assets/nicao-face.webp'),
+    loader.loadAsync('./assets/jao-face.webp'),
   ])
   honda.colorSpace = THREE.SRGBColorSpace
   tkz.colorSpace = THREE.SRGBColorSpace
