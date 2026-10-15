@@ -255,5 +255,14 @@
   "hz.slick_dino": "Mud",
   "hz.slick_rainbow": "Stardust",
   "hz.slick_sky": "Mist",
-  "toast.bumper": "Boing!"
+  "toast.bumper": "Boing!",
+  "char.tavares.name": "Tavares",
+  "char.tavares.species": "Human racer",
+  "char.tavares.blurb": "All engine and muscle — steering is a suggestion.",
+  "char.isaac.name": "Isaac",
+  "char.isaac.species": "Human racer",
+  "char.isaac.blurb": "Not the fastest, but threads every corner like a needle.",
+  "char.lebron.name": "Lebron",
+  "char.lebron.species": "Human racer",
+  "char.lebron.blurb": "Explodes off the line and dunks on the first corner."
 }

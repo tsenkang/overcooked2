@@ -255,5 +255,14 @@
   "hz.slick_dino": "泥地",
   "hz.slick_rainbow": "星尘",
   "hz.slick_sky": "雾气",
-  "toast.bumper": "弹！"
+  "toast.bumper": "弹！",
+  "char.tavares.name": "Tavares",
+  "char.tavares.species": "人类车手",
+  "char.tavares.blurb": "全靠马力和肌肉，转向只是个建议。",
+  "char.isaac.name": "Isaac",
+  "char.isaac.species": "人类车手",
+  "char.isaac.blurb": "不是最快的，但过弯像穿针一样精准。",
+  "char.lebron.name": "Lebron",
+  "char.lebron.species": "人类车手",
+  "char.lebron.blurb": "起步爆发，第一个弯道就来个扣篮。"
 }

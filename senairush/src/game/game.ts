@@ -211,7 +211,8 @@ export class Game {
   private spawn(humans: Character[]): void {
     this.clearRace()
     const HUMAN_GRID = [3, 2, 4, 5]
-    const others = ROSTER.filter(c => !humans.includes(c))
+    // Shuffle the AI field so every racer in the roster shows up as a rival over time.
+    const others = ROSTER.filter(c => !humans.includes(c)).sort(() => Math.random() - 0.5)
     const slotAt = new Map(humans.map((_, i) => [HUMAN_GRID[i], i + 1]))
     let k = 0
     let ai = 0
