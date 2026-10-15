@@ -70,11 +70,12 @@ let jaoFaceTexture: THREE.Texture | null = null
 let berbasFaceTexture: THREE.Texture | null = null
 let tsenFaceTexture: THREE.Texture | null = null
 let lebronFaceTexture: THREE.Texture | null = null
+let tavaresFaceTexture: THREE.Texture | null = null
 
 /** Load user-supplied face photos before portraits and race models are created. */
 export async function preloadFaceAssets(): Promise<void> {
   const loader = new THREE.TextureLoader()
-  const [honda, tkz, nicao, jao, berbas, tsen, lebron] = await Promise.all([
+  const [honda, tkz, nicao, jao, berbas, tsen, lebron, tavares] = await Promise.all([
     loader.loadAsync('./assets/honda-face.png'),
     loader.loadAsync('./assets/tkz-face.png'),
     loader.loadAsync('./assets/nicao-face.webp'),
@@ -82,6 +83,7 @@ export async function preloadFaceAssets(): Promise<void> {
     loader.loadAsync('./assets/berbas-face.webp'),
     loader.loadAsync('./assets/tsen-face.webp'),
     loader.loadAsync('./assets/lebron-face.webp'),
+    loader.loadAsync('./assets/tavares-face.webp'),
   ])
   honda.colorSpace = THREE.SRGBColorSpace
   tkz.colorSpace = THREE.SRGBColorSpace
@@ -90,6 +92,7 @@ export async function preloadFaceAssets(): Promise<void> {
   berbas.colorSpace = THREE.SRGBColorSpace
   tsen.colorSpace = THREE.SRGBColorSpace
   lebron.colorSpace = THREE.SRGBColorSpace
+  tavares.colorSpace = THREE.SRGBColorSpace
   hondaFaceTexture = honda
   tkzFaceTexture = tkz
   nicaoFaceTexture = nicao
@@ -97,6 +100,7 @@ export async function preloadFaceAssets(): Promise<void> {
   berbasFaceTexture = berbas
   tsenFaceTexture = tsen
   lebronFaceTexture = lebron
+  tavaresFaceTexture = tavares
 }
 
 export type KartView = {
@@ -171,8 +175,8 @@ function buildDriver(c: Character): { driver: THREE.Group; head: THREE.Group; ta
   const head = new THREE.Group()
   head.position.set(0, 1.58, -0.24)
   const h = new Parts()
-  const faceTexture = c.id === 'frog' ? hondaFaceTexture : c.id === 'sloth' ? tkzFaceTexture : c.id === 'hamster' ? nicaoFaceTexture : c.id === 'redpanda' ? jaoFaceTexture : c.id === 'hedgehog' ? berbasFaceTexture : c.id === 'bunny' ? tsenFaceTexture : c.id === 'lebron' ? lebronFaceTexture : null
-  // PNG racers use the photo as the whole head; Tavares and Isaac keep a blank 3D head.
+  const faceTexture = c.id === 'frog' ? hondaFaceTexture : c.id === 'sloth' ? tkzFaceTexture : c.id === 'hamster' ? nicaoFaceTexture : c.id === 'redpanda' ? jaoFaceTexture : c.id === 'hedgehog' ? berbasFaceTexture : c.id === 'bunny' ? tsenFaceTexture : c.id === 'lebron' ? lebronFaceTexture : c.id === 'tavares' ? tavaresFaceTexture : null
+  // PNG racers use the photo as the whole head; only Isaac keeps a blank 3D head.
   if (!faceTexture) {
     h.add(ico(0.43, 2), skin, [0, 0, 0], [0, 0, 0], [0.92, 1.08, 0.88])
     head.add(h.mesh())
