@@ -44,7 +44,7 @@ async function boot(): Promise<void> {
     if (tutorial && !split) save.update({ tutorialDone: true })
     ui.show('hud')
     input.clearPresses()
-    loop.resetAccumulator()
+    loop?.resetAccumulator()
   }
 
   const pause = () => {
@@ -57,7 +57,7 @@ async function boot(): Promise<void> {
     game.resume()
     ui.show((game.mode as string) === 'ended' ? 'results' : 'hud')
     input.clearPresses()
-    loop.resetAccumulator()
+    loop?.resetAccumulator()
   }
   const toTitle = () => {
     game?.toTitle()
@@ -67,6 +67,10 @@ async function boot(): Promise<void> {
   const ui = new Ui(document.getElementById('ui')!, i18n, save, audio, input, {
     race: () => {
       audio.unlock()
+      ui.show('tracks')
+    },
+    trackChanged: id => {
+      loadTrack(id)
       game?.showSelect(save.data.character)
       ui.show('select')
     },
@@ -120,11 +124,8 @@ async function boot(): Promise<void> {
   ui.setPortraits(renderPortraits(renderer.gl, ROSTER))
   ui.setBootProgress(0.95)
 
-  game = new Game(
-    renderer,
-    input,
-    audio,
-    {
+  const { trackById } = await import('./game/tracks')
+  const hooks: ConstructorParameters<typeof Game>[3] = {
       banner: (kind, vars, slot) => ui.banner(kind, vars, slot),
       countdown: n => ui.countdown(n),
       hurt: (kind, slot) => ui.hurt(kind, slot),
@@ -134,27 +135,38 @@ async function boot(): Promise<void> {
       toast: (key, vars, slot) => ui.toast(key, vars, slot),
       finished: result => ui.showResults(result),
       flash: () => ui.flash(),
-    },
-    save.data.quality,
-  )
-  applySettings(save.data)
-  ui.setTrackOutline(game.track.outline(4))
-  const g = game
+  }
+  const GameClass = Game
+  /** Build (or rebuild) the world for one circuit. */
+  const loadTrack = (id: string) => {
+    if (game && game.def.id === id) return
+    game?.dispose()
+    game = new GameClass(renderer, input, audio, hooks, save.data.quality, trackById(id))
+    save.update({ track: game.def.id })
+    applySettings(save.data)
+    ui.setTrackOutline(game.track.outline(4))
+    ;(window as unknown as { __game: { game: unknown } }).__game = { game, ui, input, save } as never
+    loop?.resetAccumulator()
+  }
+  let loop: GameLoop | undefined
+  loadTrack(save.data.track)
+  const G = () => game!
 
   let stepped = false
-  const loop = new GameLoop({
+  loop = new GameLoop({
     step: dt => {
-      g.step(dt)
+      G().step(dt)
       stepped = true
     },
     render: (alpha, frameSeconds) => {
+      const g = G()
       input.update()
       if (input.consume('pause')) {
         if (g.mode === 'playing' && ui.screen === 'hud') pause()
         else if (g.mode === 'paused' && ui.screen === 'pause') resume()
       }
       ui.frame(frameSeconds)
-      loop.paused = g.mode === 'paused'
+      loop!.paused = g.mode === 'paused'
       g.render(alpha, frameSeconds)
       if (ui.screen === 'hud' && g.player) {
         const players = g.split ? g.humans().length : 1
@@ -168,6 +180,7 @@ async function boot(): Promise<void> {
     },
   })
   loop.start()
+  const g = { get mode() { return G().mode }, playTitleMusic: () => G().playTitleMusic() }
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) pause()
@@ -184,7 +197,7 @@ async function boot(): Promise<void> {
   ui.setBootProgress(1)
   window.setTimeout(() => ui.show('title'), 200)
   // Debug/test hook (read-only use): smoke tests inspect state through it.
-  ;(window as unknown as { __game: unknown }).__game = { game: g, ui, input, save }
+  ;(window as unknown as { __game: unknown }).__game = { get game() { return G() }, ui, input, save }
 }
 
 function safeGet(key: string): string | null {

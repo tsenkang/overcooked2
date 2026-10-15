@@ -18,6 +18,8 @@ import { advance, catchUp, currentLap, estimateFinish, standings } from './rules
 import { buildScenery, type Scenery } from './scenery'
 import { registerSounds } from './sounds'
 import { Track, WALL } from './track'
+import { THEMES } from './themes'
+import type { TrackDef } from './tracks'
 
 export type Mode = 'title' | 'select' | 'playing' | 'paused' | 'ended'
 export type Phase = 'intro' | 'countdown' | 'racing' | 'done'
@@ -135,9 +137,16 @@ export class Game {
   private runUnranked = false
   private playerDriver = new SplineDriver({ skill: 0.8, lane: 0, bravery: 0.6, wobble: 0 })
 
-  constructor(private readonly renderer: Renderer, private readonly input: Input, private readonly audio: Audio, private readonly hooks: GameHooks, quality: Quality) {
+  constructor(
+    private readonly renderer: Renderer,
+    private readonly input: Input,
+    private readonly audio: Audio,
+    private readonly hooks: GameHooks,
+    quality: Quality,
+    readonly def: TrackDef,
+  ) {
     this.physics = new Physics(-26)
-    this.track = new Track(this.physics)
+    this.track = new Track(this.physics, def, THEMES[def.theme])
     this.scene.add(this.track.group)
     this.scenery = buildScenery(this.scene, this.track, renderer.shadowMapSize)
     this.fx = new Fx(this.scene)
@@ -324,6 +333,11 @@ export class Game {
   setQuality(q: Quality): void {
     this.renderer.applyQuality(q)
     this.scenery.setShadowMap(this.renderer.shadowMapSize)
+    // Turning shadows on/off changes every lit shader; without a recompile surfaces render white.
+    this.scene.traverse(o => {
+      const mat = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined
+      for (const m of Array.isArray(mat) ? mat : mat ? [mat] : []) m.needsUpdate = true
+    })
     this.fx.setDensity(q === 'low' ? 0.4 : q === 'medium' ? 0.7 : 1)
   }
 
@@ -371,7 +385,7 @@ export class Game {
     if (this.mode === 'playing' && this.phase === 'countdown') this.stepCountdown()
     if (racing) this.raceTime += dt
 
-    const obstacles = [...this.items.obstacles(), ...this.track.pressObstacles(this.time), ...this.track.spinnerObstacles(this.time)]
+    const obstacles = [...this.items.obstacles(), ...this.track.hazardObstacles(this.time)]
     for (const r of this.racers) {
       if (r.respawnTime > 0) {
         r.respawnTime -= dt
@@ -423,7 +437,7 @@ export class Game {
         for (const e of events) this.onProgress(r, e.type, e.type === 'lap' ? e.lap : 0)
       }
       if (r.position.y < loc.height - 8 || loc.distance > WALL + 8) this.startRespawn(r)
-      this.checkPress(r, loc)
+      this.checkHazards(r, loc)
       this.handleEvents(r)
     }
     this.kartContacts()
@@ -726,8 +740,8 @@ export class Game {
       }
   }
 
-  /** Workshop presses: get caught under one as it slams and you're flattened for a moment. */
-  private checkPress(r: Racer, loc: ReturnType<Track['locate']>): void {
+  /** Set-piece hazards (presses, turbines, traffic, trains, geysers): one hit, then a moment of grace. */
+  private checkHazards(r: Racer, loc: ReturnType<Track['locate']>): void {
     const left = (this.squashed.get(r) ?? 0) - 1 / 60
     if (left > 0) {
       this.squashed.set(r, left)
@@ -735,53 +749,43 @@ export class Game {
     }
     this.squashed.delete(r)
     if (r.respawnTime > 0 || r.invincible) return
-    const press = r.kart.grounded && this.track.pressAt(loc, this.time)
-    const turbine = !press && this.track.spinnerAt(r.position, loc, this.time)
-    if (!press && !turbine) return
+    const hit = this.track.hazardAt(r.position, loc, r.kart.grounded, this.time)
+    if (!hit) return
     this.squashed.set(r, 1.6)
-    if (turbine) {
-      // The turbine bar swats the kart sideways.
-      const c = this.track.main.pointAt(turbine.s)
-      const away = r.position.clone().sub(c).setY(0).normalize()
-      if (r.shielded) {
-        r.shieldTime = 0
-        this.sfxAt('shieldPop', r.position)
-        if (r.isPlayer) this.hooks.hurt('blocked', this.slotOf(r))
-        return
-      }
-      r.kart.spinOut(0.9, 0.25)
-      r.kart.impulse(away.multiplyScalar(8).add(new THREE.Vector3(0, 5, 0)))
-      r.bounce(2)
-      this.fx.ring(r.position, '#ffc400', 12, 7)
-      this.sfxAt('bump', r.position)
-      if (r.isPlayer) {
-        const slot = this.slotOf(r)
-        this.hooks.hurt('bee', slot)
-        this.hooks.toast('toast.turbine', {}, slot)
-        this.audio.play('hitMe')
-        this.camFor(r).addTrauma(0.6)
-        this.input.rumble(0.9, 0.6, 220, this.deviceOf(r))
-      }
-      return
-    }
     if (r.shielded) {
       r.shieldTime = 0
       this.sfxAt('shieldPop', r.position)
       if (r.isPlayer) this.hooks.hurt('blocked', this.slotOf(r))
       return
     }
-    r.kart.spinOut(1.1, 0.1)
-    r.bounce(3)
-    this.fx.ring(r.position, '#ffc400', 14, 7)
-    this.sfxAt('bump', r.position)
+    r.kart.spinOut(hit.spin, hit.squash ? 0.1 : 0.25)
+    if (hit.lift > 0 || hit.push.lengthSq() > 0) r.kart.impulse(hit.push.clone().setY(hit.lift))
+    r.bounce(hit.squash ? 3 : 2)
+    this.fx.ring(r.position, hit.kind === 'geyser' ? '#ffffff' : '#ffc400', 14, 7)
+    this.sfxAt(hit.kind === 'geyser' ? 'splash' : 'bump', r.position)
     if (r.isPlayer) {
       const slot = this.slotOf(r)
       this.hooks.hurt('bee', slot)
-      this.hooks.toast('toast.squashed', {}, slot)
+      this.hooks.toast(`toast.${hit.kind}`, {}, slot)
       this.audio.play('hitMe')
-      this.camFor(r).addTrauma(0.7)
+      this.camFor(r).addTrauma(hit.squash ? 0.7 : 0.6)
       this.input.rumble(1, 0.7, 260, this.deviceOf(r))
     }
+  }
+
+  /** Free the physics world and everything in the scene before switching circuits. */
+  dispose(): void {
+    this.stopLoops()
+    this.music.stop()
+    this.clearRace()
+    this.scene.traverse(o => {
+      const m = o as THREE.Mesh
+      m.geometry?.dispose?.()
+    })
+    this.scene.clear()
+    this.physics.dispose()
+    document.body.classList.remove('local-split')
+    delete document.body.dataset.players
   }
 
   private onHit(victim: Racer, by: Racer | null, kind: HitKind): void {

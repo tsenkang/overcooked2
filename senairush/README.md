@@ -48,12 +48,24 @@ pnpm smoke    # after build: headless browser playthrough + screenshots in shots
 - **Colliders come from the helpers** in `physics.ts` with the same sizes as the meshes.
 - Keep `npm run build` within budget (`scripts/check-size.mjs`) and `npm run smoke` green.
 
-## Pista e poderes
+## Pistas
 
-A volta tem ~1,7 km com vários trechos diferentes: campus e atalho da oficina, subida até o platô
-com rampa de salto, ponte alta sobre o lago, **Oficina de Prensas** (prensas que descem e esmagam),
-retorno em U e o **cânion da pedreira** no sudoeste: turbo + rampa para **pular um abismo** com rio
-no fundo, **turbinas gigantes** girando na pista (fique na borda ou acerte o tempo) e um slalom de turbos.
+Depois de **Race** vem a escolha de pista (o jogo monta o mundo da pista escolhida). São 6 circuitos,
+cada um com tema, cenário, céu e obstáculos próprios — e todos com atalho, caixas de item e saltos:
+
+| Pista | Tema | Tamanho | O que acontece |
+| --- | --- | --- | --- |
+| **SENAI Campus** | Campus | 1,7 km | Prensas da oficina, salto da pedreira, turbinas, ônibus do campus, empilhadeiras cruzando, gêiseres de vapor |
+| **Cactus Rally** | Deserto | 1,8 km | Trem cruzando a reta, pedras rolando e despencando, salto sobre o cânion, gêiseres de petróleo, mancha de óleo |
+| **Frozen Peak** | Neve | 1,8 km | Bolas de neve gigantes rolando morro abaixo contra você, pinguins, fenda para pular, ponte no lago congelado, gelo |
+| **Sweet Valley** | Doce | 1,8 km | Bolas de chiclete atravessando, carrinhos, fábrica com prensas, xarope escorregadio, chafarizes de refrigerante, moinhos |
+| **Neon Avenue** | Cidade à noite | 1,8 km | Trânsito nos dois sentidos, dois trens, túnel com prensas, bueiros de vapor, pista molhada, salto |
+| **Boiling Volcano** | Vulcão | 2,1 km | Dois saltos sobre lava, barras de fogo girando, gêiseres de lava, rochas rolando, ponte sobre a lava, forja |
+
+Toda pista é só dados em `src/game/tracks.ts` (pontos do traçado + obstáculos ancorados por posição);
+o tema (cores, céu, luz, decoração) fica em `src/game/themes.ts`. O recorde é separado por pista.
+
+## Poderes
 
 | Poder | O que faz |
 | --- | --- |

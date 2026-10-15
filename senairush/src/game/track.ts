@@ -3,30 +3,14 @@ import { COLLISION, groups, type SurfaceInfo } from '../engine/kart'
 import type { Physics } from '../engine/physics'
 import { TrackSpline } from '../engine/spline'
 import { CONFIG } from './config'
+import type { Theme } from './themes'
+import type { CrosserKind, Lake, MoverKind, TrackDef, XZ } from './tracks'
 
 /**
- * SENAI Pompéia: the one hand-authored technical-campus circuit. Layout is data (control points + feature
- * anchors by world position); meshes, colliders, walls with branch gaps, the minimap and all
- * lookups are generated from the splines so tweaking a point keeps everything consistent.
+ * A circuit built from a `TrackDef` (see tracks.ts): road, shortcut, walls, colliders, boost pads,
+ * ramps, bridges and every hazard. Everything is generated from the splines, so moving a control
+ * point keeps meshes, physics, AI lines and the minimap consistent.
  */
-// [x, z, y]
-export const MAIN_POINTS: [number, number, number][] = [
-  [-40, 0, 0], [30, 0, 0], [75, -10, 0], [98, -45, 0.5], [95, -90, 1], [70, -118, 1], [35, -120, 1], [12, -100, 1.5], [10, -70, 2],
-  [-10, -48, 2.5], [-40, -45, 3], [-62, -65, 5], [-72, -100, 7.5], [-80, -140, 4], [-100, -165, 1.5],
-  // South-west quarry canyon: jump over the ravine → spinning turbines → boost slalom.
-  [-98, -205, 2], [-118, -250, 4], [-165, -280, 2.5], [-220, -272, 3], [-255, -232, 2], [-258, -182, 1.5], [-228, -150, 1], [-188, -150, 1],
-  [-155, -135, 1],
-  [-150, -90, 0.5], [-128, -45, 0],
-  // North loop: hill climb → plateau jump → high bridge over the lake → chicane → workshop tunnel
-  // with the stamping presses → wide U-turn back onto the start straight.
-  [-145, -5, 1], [-150, 35, 3], [-130, 70, 6], [-95, 95, 9], [-50, 105, 10], [-5, 100, 8], [33, 90, 6], [54, 68, 4.5], [46, 46, 3.8],
-  [18, 38, 3], [-15, 42, 2], [-60, 48, 1], [-92, 47, 0.6], [-110, 38, 0.4], [-115, 22, 0.2], [-106, 7, 0], [-88, 1, 0],
-]
-/** Lake under the north bridge (world XZ, radius); scenery carves and fills it. */
-export const BRIDGE_LAKE = { x: 14, z: 96, r: 19 }
-/** Shortcut: leaves the inside of the east sweep and rejoins before the south hairpin. */
-export const SHORTCUT = { from: [84, -22] as const, via: [[74, -50, 0.4], [69, -82, 0.8]] as [number, number, number][], to: [55, -110] as const }
-
 export const HALF_WIDTH = 8
 export const SHOULDER = 2.4
 export const WALL = HALF_WIDTH + SHOULDER + 0.5
@@ -40,6 +24,31 @@ export type Ramp = { s: number; length: number; width: number; lip: number }
 export type Press = { s: number; lateral: number; size: number; period: number; phase: number }
 /** Quarry turbine: a bar spinning flat across the road around a post in the middle. */
 export type Spinner = { s: number; radius: number; speed: number; phase: number }
+/** Something travelling along the road inside [from, from + span] (traffic, rolling snowballs). */
+export type Mover = { kind: MoverKind; from: number; span: number; speed: number; lateral: number; phase: number; len: number; wid: number; height: number }
+/** Something crossing the road on a timer (trains, boulders, penguins). */
+export type Crosser = { kind: CrosserKind; s: number; period: number; phase: number; len: number; depth: number; speed: number; height: number }
+/** A vent that erupts on a cycle. */
+export type Geyser = { s: number; lateral: number; period: number; phase: number; radius: number }
+/** What a hazard does to the kart it catches. */
+export type HazardHit = { kind: 'press' | 'turbine' | 'mover' | 'crosser' | 'geyser'; spin: number; lift: number; push: THREE.Vector3; squash: boolean }
+type Obstacle = { position: THREE.Vector3; radius: number; hazard: boolean }
+
+const MOVER_SIZE: Record<MoverKind, { len: number; wid: number; height: number }> = {
+  car: { len: 4.4, wid: 2.3, height: 1.7 },
+  bus: { len: 9.5, wid: 2.9, height: 3.3 },
+  snowball: { len: 3.6, wid: 3.6, height: 3.6 },
+  boulder: { len: 3.4, wid: 3.4, height: 3.2 },
+  cart: { len: 3.2, wid: 2.2, height: 1.6 },
+}
+const CROSSER_SIZE: Record<CrosserKind, { len: number; depth: number; speed: number; height: number }> = {
+  train: { len: 34, depth: 3.6, speed: 24, height: 4 },
+  boulder: { len: 3.6, depth: 3.6, speed: 11, height: 3.4 },
+  penguin: { len: 5, depth: 2.2, speed: 4.5, height: 1.6 },
+  gumball: { len: 3.2, depth: 3.2, speed: 12, height: 3.2 },
+  forklift: { len: 4.6, depth: 2.4, speed: 6.5, height: 2.6 },
+}
+
 export type ItemSpot = { pos: THREE.Vector3; path: PathId; mainS: number }
 
 export type Loc = {
@@ -60,16 +69,6 @@ export class Tracker {
   loc: Loc = { path: 'main', s: 0, lateral: 0, mainS: 0, half: HALF_WIDTH, height: 0, distance: 0 }
 }
 
-const ROAD = new THREE.Color('#3f5668')
-const ROAD_2 = new THREE.Color('#2f4354')
-const LANE = new THREE.Color('#f7f9fb')
-const KERB_A = new THREE.Color('#e30613')
-const KERB_B = new THREE.Color('#ffc400')
-const SHOULDER_BASE = new THREE.Color('#9db4c4')
-const SPRINKLES = ['#e30613', '#ffc400', '#2b9de9', '#ffffff', '#00a99d'].map(c => new THREE.Color(c))
-const CARAMEL = new THREE.Color('#8aa3b5')
-const FLUFF = new THREE.Color('#c4dce9')
-
 export class Track {
   readonly main: TrackSpline
   readonly short: TrackSpline
@@ -79,28 +78,57 @@ export class Track {
   readonly itemSpots: ItemSpot[] = []
   readonly presses: Press[] = []
   readonly spinners: Spinner[] = []
-  /** Main-loop s-ranges with no road at all (the ravine jump). */
+  readonly movers: Mover[] = []
+  readonly crossers: Crosser[] = []
+  readonly geysers: Geyser[] = []
+  /** Main-loop s-ranges with no road at all (ravine jumps). */
   readonly gaps: { from: number; to: number }[] = []
+  /** Main-loop s-ranges carried by bridges (no embankment underneath). */
+  readonly bridges: { from: number; to: number }[] = []
+  /** Covered halls (main-loop s-ranges) with their sign text. */
+  readonly halls: { from: number; to: number; label: string }[] = []
+  /** Low-grip stretches. */
+  readonly slick: { from: number; to: number }[] = []
+  /** Lakes the scenery carves and fills (including the ones under bridges). */
+  readonly lakes: Lake[]
   private readonly spinnerViews: THREE.Object3D[] = []
-  /** Main-loop s-range carried by the bridge (no ground underneath). */
-  readonly bridge: { from: number; to: number }
-  /** Main-loop s-range under the workshop roof. */
-  readonly tunnel: { from: number; to: number }
   private readonly pressViews: { head: THREE.Object3D; rod: THREE.Mesh; shadow: THREE.Mesh; top: number }[] = []
-  /** Shortcut s-range (fraction of its length) covered with a slick workshop-floor detour. */
-  readonly fluff = { from: 0.36, to: 0.7 }
+  private readonly moverViews: THREE.Object3D[] = []
+  private readonly crosserViews: { body: THREE.Object3D; lights: THREE.Mesh[] }[] = []
+  private readonly geyserViews: { column: THREE.Mesh; cap: THREE.Mesh; ring: THREE.Mesh }[] = []
+  /** Shortcut s-range (fraction of its length) with a slow surface. */
+  readonly fluff: { from: number; to: number }
   readonly shortMap: { start: number; end: number }
   readonly padMeshes: THREE.Mesh[] = []
-  readonly landmarks: { arch: THREE.Vector3; archYaw: number; ramp: THREE.Vector3 }
+  readonly landmarks: { arch: THREE.Vector3; archYaw: number; ramp: THREE.Vector3 } | null
   private readonly shortBox = new THREE.Box3()
   private readonly chevron: THREE.CanvasTexture
+  private readonly c: { road: THREE.Color; road2: THREE.Color; lane: THREE.Color; kerbA: THREE.Color; kerbB: THREE.Color; shoulder: THREE.Color; sprinkles: THREE.Color[]; caramel: THREE.Color; fluff: THREE.Color; railA: THREE.Color; railB: THREE.Color }
 
-  constructor(private readonly physics: Physics) {
-    this.main = new TrackSpline(MAIN_POINTS.map(([x, z, y]) => ({ x, y, z })), { closed: true, step: 1, halfWidth: HALF_WIDTH })
-    const L = this.main.length
-    const sA = this.main.closest(new THREE.Vector3(SHORTCUT.from[0], 0, SHORTCUT.from[1])).s
-    const sB = this.main.closest(new THREE.Vector3(SHORTCUT.to[0], 1, SHORTCUT.to[1])).s
-    const probe = this.main.closest(new THREE.Vector3(SHORTCUT.via[0][0], 0, SHORTCUT.via[0][1]))
+  constructor(
+    private readonly physics: Physics,
+    readonly def: TrackDef,
+    readonly theme: Theme,
+  ) {
+    const R = theme.road
+    this.c = {
+      road: new THREE.Color(R.asphalt),
+      road2: new THREE.Color(R.patch),
+      lane: new THREE.Color(R.lane),
+      kerbA: new THREE.Color(R.kerbA),
+      kerbB: new THREE.Color(R.kerbB),
+      shoulder: new THREE.Color(R.shoulder),
+      sprinkles: R.sprinkles.map(c => new THREE.Color(c)),
+      caramel: new THREE.Color(R.shortcut),
+      fluff: new THREE.Color(R.shortcutSlow),
+      railA: new THREE.Color(theme.railA),
+      railB: new THREE.Color(theme.railB),
+    }
+    this.main = new TrackSpline(def.points.map(([x, z, y]) => ({ x, y, z })), { closed: true, step: 1, halfWidth: HALF_WIDTH })
+    const SC = def.shortcut
+    const sA = this.main.closest(new THREE.Vector3(SC.from[0], 0, SC.from[1])).s
+    const sB = this.main.closest(new THREE.Vector3(SC.to[0], 1, SC.to[1])).s
+    const probe = this.main.closest(new THREE.Vector3(SC.via[0][0], 0, SC.via[0][1]))
     const inner = Math.sign(probe.lateral) || 1
     // Branch mouths follow the main road's tangent before peeling away, so the split reads as a
     // clear fork and karts never meet a wall end head-on.
@@ -108,69 +136,68 @@ export class Track {
       this.main.pointAt(sA - 20, inner * 2.5),
       this.main.pointAt(sA - 8, inner * 6),
       this.main.pointAt(sA + 4, inner * 11.5),
-      ...SHORTCUT.via.map(([x, z, y]) => new THREE.Vector3(x, y, z)),
+      ...SC.via.map(([x, z, y]) => new THREE.Vector3(x, y, z)),
       this.main.pointAt(sB - 4, inner * 11.5),
       this.main.pointAt(sB + 8, inner * 6),
       this.main.pointAt(sB + 20, inner * 2.5),
     ]
     this.short = new TrackSpline(pts, { closed: false, step: 1, halfWidth: SHORT_HALF })
     this.shortMap = { start: this.main.wrap(sA - 20), end: this.main.wrap(sB + 20) }
+    this.fluff = { from: SC.slow?.[0] ?? 2, to: SC.slow?.[1] ?? 2 }
     for (const smp of this.short.samples) this.shortBox.expandByPoint(smp.pos)
     this.shortBox.expandByScalar(SHORT_WALL + 2)
     this.chevron = chevronTexture()
 
     // Feature anchors by world position (robust to spline edits).
-    const sAt = (x: number, z: number) => this.main.closest(new THREE.Vector3(x, 0, z)).s
-    const crest = sAt(-72, -100)
-    this.ramps.push({ s: crest + 9, length: 8, width: 7.2, lip: 1.35 })
-    this.pads.push({ path: 'main', s: crest + 1.5, lateral: 0, length: 5, width: 5.5 })
-    this.pads.push({ path: 'main', s: sAt(10, -78), lateral: -3, length: 5, width: 4.5 })
-    this.pads.push({ path: 'main', s: sAt(-150, -96), lateral: 3.5, length: 5, width: 4.5 })
-    this.pads.push({ path: 'short', s: this.short.length * 0.25, lateral: 0, length: 5, width: 5 })
-    // North loop features.
-    this.pads.push({ path: 'main', s: sAt(-149, 15), lateral: -3, length: 5, width: 4.5 })
-    this.pads.push({ path: 'main', s: sAt(-140, 55), lateral: 3, length: 5, width: 4.5 })
-    const plateau = sAt(-62, 104)
-    this.ramps.push({ s: plateau + 6, length: 9, width: 8, lip: 1.6 })
-    this.pads.push({ path: 'main', s: plateau - 2, lateral: 0, length: 5, width: 6 })
-    const mid = this.main.closest(new THREE.Vector3(BRIDGE_LAKE.x, 0, BRIDGE_LAKE.z)).s
-    this.bridge = { from: mid - 27, to: mid + 27 }
-    this.pads.push({ path: 'main', s: mid, lateral: 0, length: 5, width: 5 })
-    const t0 = sAt(-17, 42)
-    const t1 = sAt(-58, 48)
-    this.tunnel = { from: t0, to: t1 }
-    const span = t1 - t0
-    ;[
-      { f: 0.25, lateral: -3.6, phase: 0 },
-      { f: 0.5, lateral: 3.6, phase: 0.33 },
-      { f: 0.75, lateral: 0, phase: 0.66 },
-    ].forEach(p => this.presses.push({ s: t0 + span * p.f, lateral: p.lateral, size: 5.2, period: 3.2, phase: p.phase }))
-    this.pads.push({ path: 'main', s: t1 + 6, lateral: 0, length: 5, width: 5 })
-    // Quarry canyon: boost pad → ramp → 10 m ravine → landing.
-    const jump = this.main.closest(new THREE.Vector3(-138, 0, -263)).s
-    this.pads.push({ path: 'main', s: jump - 16, lateral: 0, length: 6, width: 8 })
-    this.ramps.push({ s: jump, length: 10, width: HALF_WIDTH * 2, lip: 1.9 })
-    this.gaps.push({ from: jump + 0.5, to: jump + 10.5 })
-    // Two turbines on the canyon's west wall, turning opposite ways.
-    const t = sAt(-257, -205)
-    // Bars stop 3 m short of each wall: hug the edge or time the gap.
-    this.spinners.push({ s: t - 14, radius: 5, speed: 1.1, phase: 0 })
-    this.spinners.push({ s: t + 16, radius: 5, speed: -1.25, phase: 1.2 })
-    // Boost slalom along the canyon exit.
-    const sl = sAt(-226, -150)
-    ;[-4, 4, -4].forEach((lat, i) => this.pads.push({ path: 'main', s: sl + i * 11, lateral: lat, length: 5, width: 4.2 }))
+    const sAt = (at: XZ, ahead = 0) => this.main.wrap(this.main.closest(new THREE.Vector3(at[0], 0, at[1])).s + ahead)
+    for (const p of def.pads ?? []) this.pads.push({ path: 'main', s: sAt(p.at, p.ahead), lateral: p.lateral ?? 0, length: p.length ?? 5, width: p.width ?? 4.5 })
+    for (const f of def.shortcutPads ?? []) this.pads.push({ path: 'short', s: this.short.length * f, lateral: 0, length: 5, width: 5 })
+    for (const r of def.ramps ?? []) {
+      const s = sAt(r.at, r.ahead)
+      const length = r.length ?? 9
+      this.ramps.push({ s, length, width: r.width ?? 8, lip: r.lip ?? 1.6 })
+      if (r.pad) this.pads.push({ path: 'main', s: s - length - (r.gap ? 6 : 3.5), lateral: 0, length: 5, width: Math.min(8, r.width ?? 8) })
+      if (r.gap) this.gaps.push({ from: s + 0.5, to: s + 0.5 + r.gap })
+    }
+    const bridgeLakes: Lake[] = []
+    for (const b of def.bridges ?? []) {
+      const mid = sAt([b.lake.x, b.lake.z])
+      const span = b.span ?? 27
+      this.bridges.push({ from: mid - span, to: mid + span })
+      bridgeLakes.push(b.lake)
+    }
+    this.lakes = [...(def.lakes ?? []), ...bridgeLakes]
+    for (const h of def.halls ?? []) {
+      const t0 = sAt(h.from)
+      const span = this.main.delta(t0, sAt(h.to))
+      this.halls.push({ from: t0, to: t0 + span, label: h.label })
+      ;[
+        { f: 0.25, lateral: -3.6, phase: 0 },
+        { f: 0.5, lateral: 3.6, phase: 0.33 },
+        { f: 0.75, lateral: 0, phase: 0.66 },
+      ].forEach(p => this.presses.push({ s: t0 + span * p.f, lateral: p.lateral, size: 5.2, period: 3.2, phase: p.phase }))
+    }
+    for (const sp of def.spinners ?? []) this.spinners.push({ s: sAt(sp.at, sp.ahead), radius: sp.radius ?? 5, speed: sp.speed, phase: sp.phase ?? 0 })
+    for (const m of def.movers ?? []) {
+      const from = sAt(m.from)
+      const span = this.main.delta(from, sAt(m.to))
+      const size = MOVER_SIZE[m.kind]
+      for (let i = 0; i < m.count; i += 1) {
+        this.movers.push({ kind: m.kind, from, span, speed: m.speed, lateral: m.lanes[i % m.lanes.length], phase: i / m.count, ...size })
+      }
+    }
+    for (const c of def.crossers ?? []) this.crossers.push({ kind: c.kind, s: sAt(c.at, c.ahead), period: c.period, phase: c.phase ?? 0, ...CROSSER_SIZE[c.kind] })
+    for (const g of def.geysers ?? []) this.geysers.push({ s: sAt(g.at, g.ahead), lateral: g.lateral, period: g.period ?? 4, phase: g.phase ?? 0, radius: 2.6 })
+    for (const sl of def.slick ?? []) {
+      const from = sAt(sl.from)
+      this.slick.push({ from, to: from + this.main.delta(from, sAt(sl.to)) })
+    }
 
-    const row = (s: number, lats = [-5.4, -1.8, 1.8, 5.4]) => {
+    const lats = [-5.4, -1.8, 1.8, 5.4]
+    for (const r of def.rows) {
+      const s = sAt(r.at, r.ahead)
       for (const lat of lats) this.itemSpots.push({ pos: this.main.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'main', mainS: this.main.wrap(s) })
     }
-    row(sAt(12, 0))
-    row(sAt(-30, -44))
-    row(sAt(-152, -118))
-    row(sAt(-122, 79))
-    row(sAt(30, 39))
-    row(sAt(-112, 30))
-    row(sAt(-100, -222))
-    row(sAt(-250, -168))
     for (const lat of [-1.6, 1.6]) {
       const s = this.short.length * 0.83
       this.itemSpots.push({ pos: this.short.pointAt(s, lat).add(new THREE.Vector3(0, 1.1, 0)), path: 'short', mainS: this.mapShort(s) })
@@ -181,13 +208,27 @@ export class Track {
     this.buildWalls()
     this.buildPads()
     this.buildRamps()
-    this.buildBridge()
-    this.buildWorkshop()
+    this.buildBridges()
+    this.buildHalls()
     this.buildSpinners()
+    this.buildMovers()
+    this.buildCrossers()
+    this.buildGeysers()
+    this.buildSlick()
     this.buildStartLine()
-    const archS = crest - 10
-    this.landmarks = { arch: this.main.pointAt(archS), archYaw: this.main.yawAt(archS), ramp: this.main.pointAt(this.ramps[0].s) }
-    void L
+    if (def.landmark) {
+      const archS = sAt(def.landmark.at, def.landmark.ahead)
+      this.landmarks = { arch: this.main.pointAt(archS), archYaw: this.main.yawAt(archS), ramp: this.main.pointAt(this.ramps[0]?.s ?? archS) }
+    } else this.landmarks = null
+  }
+
+  /** On a bridge deck (no ground below). */
+  inBridge(s: number): boolean {
+    return this.bridges.some(b => this.main.delta(b.from, s) > 0 && this.main.delta(s, b.to) > 0)
+  }
+
+  inSlick(s: number): boolean {
+    return this.slick.some(b => this.main.delta(b.from, s) > 0 && this.main.delta(s, b.to) > 0)
   }
 
   get length(): number {
@@ -230,6 +271,7 @@ export class Track {
         gripMul = 0.85
       }
     }
+    if (loc.path === 'main' && this.inSlick(loc.s) && Math.abs(loc.lateral) < loc.half + 0.25) gripMul = Math.min(gripMul, 0.3)
     let boostPad = false
     for (const p of this.pads) {
       if (p.path !== loc.path) continue
@@ -284,6 +326,41 @@ export class Track {
     this.chevron.offset.y = -time * 1.6
     for (const m of this.padMeshes) (m.material as THREE.MeshBasicMaterial).color.setScalar(0.85 + Math.sin(time * 8) * 0.15)
     this.spinners.forEach((sp, i) => (this.spinnerViews[i].rotation.y = this.spinnerAngle(sp, time)))
+    this.movers.forEach((m, i) => {
+      const v = this.moverViews[i]
+      const { s, fade } = this.moverAt(m, time)
+      const p = this.main.pointAt(s, m.lateral)
+      v.position.set(p.x, p.y, p.z)
+      v.rotation.set(0, this.main.yawAt(s) + (m.speed < 0 ? Math.PI : 0), 0)
+      v.scale.setScalar(Math.max(0.001, fade))
+      v.visible = fade > 0.01
+      const roll = v.userData.roll as THREE.Object3D | undefined
+      if (roll) roll.rotation.x = (time * m.speed) / (m.height / 2)
+    })
+    this.crossers.forEach((c, i) => {
+      const v = this.crosserViews[i]
+      const st = this.crosserAt(c, time)
+      const p = this.main.pointAt(c.s, st.lateral)
+      v.body.visible = st.active
+      v.body.position.set(p.x, this.main.pointAt(c.s).y, p.z)
+      v.body.rotation.y = this.main.yawAt(c.s) + Math.PI / 2 + (st.dir < 0 ? Math.PI : 0)
+      const roll = v.body.userData.roll as THREE.Object3D | undefined
+      if (roll) roll.rotation.x = time * c.speed * 0.6
+      const waddle = v.body.userData.waddle as THREE.Object3D | undefined
+      if (waddle) waddle.rotation.z = Math.sin(time * 9) * 0.18
+      const on = st.warning && Math.floor(time * 4) % 2 === 0
+      for (const [k, l] of v.lights.entries()) (l.material as THREE.MeshBasicMaterial).color.set(st.warning && (on ? k % 2 === 0 : k % 2 === 1) ? '#ff2a2a' : '#401010')
+    })
+    this.geysers.forEach((g, i) => {
+      const v = this.geyserViews[i]
+      const st = this.geyserState(g, time)
+      const h = st.erupting ? 1 + Math.sin(st.t * Math.PI) * 9 : st.warning ? 0.3 + Math.abs(Math.sin(time * 18)) * 0.4 : 0.05
+      v.column.scale.set(1, h, 1)
+      v.column.position.y = h / 2
+      v.cap.position.y = h
+      v.cap.visible = st.erupting || st.warning
+      ;(v.ring.material as THREE.MeshBasicMaterial).opacity = st.warning || st.erupting ? 0.95 : 0.45
+    })
     this.presses.forEach((p, i) => {
       const v = this.pressViews[i]
       const lift = this.pressLift(p, time)
@@ -364,7 +441,8 @@ export class Track {
     const stripes = hazardTexture()
     stripes.wrapS = THREE.RepeatWrapping
     stripes.repeat.set(6, 1)
-    const barMat = new THREE.MeshStandardMaterial({ map: stripes, flatShading: true, roughness: 0.5 })
+    // The volcano's turbines are fire bars.
+    const barMat = this.theme.id === 'volcano' ? new THREE.MeshBasicMaterial({ color: '#ff6a2b', toneMapped: false }) : new THREE.MeshStandardMaterial({ map: stripes, flatShading: true, roughness: 0.5 })
     const postMat = new THREE.MeshStandardMaterial({ color: '#1e4d6b', flatShading: true, roughness: 0.5 })
     const hubMat = new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.4 })
     const groupsWall = groups(COLLISION.WALL, COLLISION.KART | COLLISION.DEBRIS)
@@ -392,6 +470,260 @@ export class Track {
     }
   }
 
+  // ─── traffic, crossers, geysers ────────────────────────────────────
+
+  /** Where a mover is now; `fade` shrinks it in/out at the ends of its stretch. */
+  moverAt(m: Mover, time: number): { s: number; fade: number } {
+    const t = (time * Math.abs(m.speed)) / Math.max(1, m.span) + m.phase
+    const u = t - Math.floor(t)
+    const s = m.speed >= 0 ? m.from + u * m.span : m.from + (1 - u) * m.span
+    const fade = THREE.MathUtils.smoothstep(u, 0, 0.05) * (1 - THREE.MathUtils.smoothstep(u, 0.95, 1))
+    return { s: this.main.wrap(s), fade }
+  }
+
+  /** Crossers travel side to side for part of each period, alternating direction. */
+  crosserAt(c: Crosser, time: number): { lateral: number; active: boolean; warning: boolean; dir: number } {
+    const X = WALL + c.len / 2 + 2
+    const travel = (2 * X) / c.speed
+    const m = Math.min(0.92, travel / c.period)
+    const t = time / c.period + c.phase
+    const u = t - Math.floor(t)
+    const dir = Math.floor(t) % 2 === 0 ? 1 : -1
+    const active = u < m
+    const lateral = dir * (-X + 2 * X * (active ? u / m : 1))
+    const warning = active || 1 - u < 2.2 / c.period
+    return { lateral, active, warning, dir }
+  }
+
+  geyserState(g: Geyser, time: number): { warning: boolean; erupting: boolean; t: number } {
+    const v = time / g.period + g.phase
+    const u = v - Math.floor(v)
+    return { warning: u >= 0.42 && u < 0.6, erupting: u >= 0.6 && u < 0.82, t: (u - 0.6) / 0.22 }
+  }
+
+  /** Whatever hazard is catching a kart at `pos` right now. */
+  hazardAt(pos: THREE.Vector3, loc: Loc, grounded: boolean, time: number): HazardHit | null {
+    if (grounded && this.pressAt(loc, time)) return { kind: 'press', spin: 1.1, lift: 0, push: new THREE.Vector3(), squash: true }
+    const sp = this.spinnerAt(pos, loc, time)
+    if (sp) {
+      const c = this.main.pointAt(sp.s)
+      return { kind: 'turbine', spin: 0.9, lift: 5, push: pos.clone().sub(c).setY(0).normalize().multiplyScalar(8), squash: false }
+    }
+    if (loc.path !== 'main') return null
+    for (const m of this.movers) {
+      const { s, fade } = this.moverAt(m, time)
+      if (fade < 0.6) continue
+      if (Math.abs(this.main.delta(s, loc.s)) < m.len / 2 + 0.9 && Math.abs(loc.lateral - m.lateral) < m.wid / 2 + 0.9) {
+        const ahead = this.main.at(s).tan.clone().multiplyScalar(Math.sign(m.speed) * 6)
+        const side = this.main.at(s).right.clone().multiplyScalar(Math.sign(loc.lateral - m.lateral || 1) * 6)
+        return { kind: 'mover', spin: 0.9, lift: 5, push: ahead.add(side), squash: false }
+      }
+    }
+    for (const c of this.crossers) {
+      const st = this.crosserAt(c, time)
+      if (!st.active) continue
+      if (Math.abs(this.main.delta(c.s, loc.s)) < c.depth / 2 + 0.9 && Math.abs(loc.lateral - st.lateral) < c.len / 2 + 0.9) {
+        return { kind: 'crosser', spin: 1.0, lift: 6, push: this.main.at(c.s).right.clone().multiplyScalar(st.dir * 11), squash: false }
+      }
+    }
+    for (const g of this.geysers) {
+      if (!this.geyserState(g, time).erupting) continue
+      if (Math.abs(this.main.delta(g.s, loc.s)) < g.radius + 0.5 && Math.abs(loc.lateral - g.lateral) < g.radius + 0.5) {
+        return { kind: 'geyser', spin: 0.8, lift: 15, push: new THREE.Vector3(), squash: false }
+      }
+    }
+    return null
+  }
+
+  /** Every hazard the AI should steer around right now. */
+  hazardObstacles(time: number): Obstacle[] {
+    const out: Obstacle[] = [...this.pressObstacles(time), ...this.spinnerObstacles(time)]
+    for (const m of this.movers) {
+      const { s, fade } = this.moverAt(m, time)
+      if (fade < 0.3) continue
+      out.push({ position: this.main.pointAt(s, m.lateral), radius: Math.max(m.len, m.wid) / 2 + 0.6, hazard: true })
+      if (m.len > 6) out.push({ position: this.main.pointAt(s - Math.sign(m.speed) * m.len * 0.35, m.lateral), radius: m.wid / 2 + 0.8, hazard: true })
+    }
+    for (const c of this.crossers) {
+      const st = this.crosserAt(c, time)
+      if (!st.warning) continue
+      // Treat a warned crossing as blocked where the crosser is (or is about to enter).
+      const lat = st.active ? st.lateral : -st.dir * (WALL - 1)
+      for (const k of [-0.35, 0, 0.35]) out.push({ position: this.main.pointAt(c.s, THREE.MathUtils.clamp(lat + k * c.len, -WALL, WALL)), radius: c.depth / 2 + 1, hazard: true })
+    }
+    for (const g of this.geysers) {
+      const st = this.geyserState(g, time)
+      if (st.warning || st.erupting) out.push({ position: this.main.pointAt(g.s, g.lateral), radius: g.radius + 0.8, hazard: true })
+    }
+    return out
+  }
+
+  private buildMovers(): void {
+    const palette = ['#e30613', '#2b9de9', '#ffc400', '#00a99d', '#ff7aa2', '#ffffff', '#7b5cff']
+    const dark = new THREE.MeshStandardMaterial({ color: '#1d232b', flatShading: true, roughness: 0.6 })
+    const glass = new THREE.MeshStandardMaterial({ color: '#9fd3ff', emissive: '#3a6f9a', emissiveIntensity: 0.4, flatShading: true, roughness: 0.2 })
+    const lamp = new THREE.MeshBasicMaterial({ color: '#fff6c4', toneMapped: false })
+    this.movers.forEach((m, i) => {
+      const g = new THREE.Group()
+      const mat = (c: string) => new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.45 })
+      if (m.kind === 'car' || m.kind === 'bus' || m.kind === 'cart') {
+        const color = m.kind === 'bus' ? (i % 2 ? '#ffc400' : '#2b9de9') : m.kind === 'cart' ? ['#ff5fa2', '#7fe0ff', '#ffe066'][i % 3] : palette[i % palette.length]
+        const body = new THREE.Mesh(new THREE.BoxGeometry(m.wid, m.height * 0.55, m.len), mat(color))
+        body.position.y = m.height * 0.42
+        const cabin = new THREE.Mesh(new THREE.BoxGeometry(m.wid * 0.92, m.height * 0.4, m.kind === 'bus' ? m.len * 0.94 : m.len * 0.5), glass)
+        cabin.position.set(0, m.height * 0.86, m.kind === 'bus' ? 0 : -m.len * 0.05)
+        g.add(body, cabin)
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+          const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.4, 10), dark)
+          w.rotation.z = Math.PI / 2
+          w.position.set((sx * m.wid) / 2, 0.45, (sz * m.len) / 2.8)
+          g.add(w)
+        }
+        for (const sx of [-1, 1]) {
+          const l = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.25, 0.1), lamp)
+          l.position.set(sx * m.wid * 0.32, m.height * 0.45, m.len / 2 + 0.03)
+          g.add(l)
+        }
+      } else {
+        // Rolling ball (snowball / boulder).
+        const roll = new THREE.Group()
+        const geo = m.kind === 'snowball' ? new THREE.IcosahedronGeometry(m.height / 2, 1) : new THREE.DodecahedronGeometry(m.height / 2, 0)
+        const ball = new THREE.Mesh(geo, mat(m.kind === 'snowball' ? '#ffffff' : '#8c6b52'))
+        roll.add(ball)
+        roll.position.y = m.height / 2
+        g.add(roll)
+        g.userData.roll = roll
+      }
+      g.traverse(o => ((o as THREE.Mesh).castShadow = true))
+      this.group.add(g)
+      this.moverViews.push(g)
+    })
+  }
+
+  private buildCrossers(): void {
+    const post = new THREE.MeshStandardMaterial({ color: '#2b2b33', flatShading: true })
+    for (const c of this.crossers) {
+      const body = new THREE.Group()
+      const mat = (col: string, emissive = '#000000') => new THREE.MeshStandardMaterial({ color: col, emissive, flatShading: true, roughness: 0.5 })
+      if (c.kind === 'train') {
+        // Locomotive + carriages laid along the crossing direction (local z).
+        const cars = 3
+        const each = c.len / cars
+        for (let k = 0; k < cars; k += 1) {
+          const car = new THREE.Mesh(new THREE.BoxGeometry(c.depth, c.height, each - 0.6), mat(k === 0 ? '#e30613' : '#2b4e7a'))
+          car.position.set(0, c.height / 2 + 0.5, c.len / 2 - each * (k + 0.5))
+          const stripe = new THREE.Mesh(new THREE.BoxGeometry(c.depth + 0.05, 0.4, each - 0.6), mat('#ffc400', '#806000'))
+          stripe.position.copy(car.position).setY(c.height * 0.55 + 0.5)
+          const win = new THREE.Mesh(new THREE.BoxGeometry(c.depth + 0.06, 0.8, each - 1.6), mat('#9fd3ff', '#3a6f9a'))
+          win.position.copy(car.position).setY(c.height * 0.8 + 0.5)
+          body.add(car, stripe, win)
+        }
+        const head = new THREE.Mesh(new THREE.BoxGeometry(c.depth * 0.6, 0.5, 0.2), new THREE.MeshBasicMaterial({ color: '#fff6c4', toneMapped: false }))
+        head.position.set(0, c.height * 0.4 + 0.5, c.len / 2 + 0.02)
+        body.add(head)
+        // Rails across the road.
+        const rails = new THREE.Mesh(new THREE.BoxGeometry((WALL + 18) * 2, 0.12, 2.4), mat('#5a5f6b'))
+        const at = this.main.at(c.s)
+        rails.position.copy(at.pos).setY(at.pos.y + 0.07)
+        rails.rotation.y = Math.atan2(at.tan.x, at.tan.z) + Math.PI / 2
+        this.group.add(rails)
+      } else if (c.kind === 'forklift') {
+        const base = new THREE.Mesh(new THREE.BoxGeometry(c.depth, 1.3, c.len * 0.7), mat('#ffc400'))
+        base.position.y = 1
+        const mast = new THREE.Mesh(new THREE.BoxGeometry(c.depth * 0.8, 2.6, 0.25), mat('#2b2b33'))
+        mast.position.set(0, 1.6, c.len * 0.38)
+        const fork = new THREE.Mesh(new THREE.BoxGeometry(c.depth * 0.7, 0.15, 1.4), mat('#8a96a3'))
+        fork.position.set(0, 0.5, c.len * 0.5)
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.2, 1.2), mat('#b07a45'))
+        crate.position.set(0, 1.2, c.len * 0.52)
+        body.add(base, mast, fork, crate)
+      } else if (c.kind === 'penguin') {
+        const waddle = new THREE.Group()
+        for (const k of [-1, 0, 1]) {
+          const p = new THREE.Group()
+          const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.45, 0.7, 4, 8), mat('#1d232b'))
+          b.position.y = 0.85
+          const belly = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 6), mat('#ffffff'))
+          belly.position.set(0, 0.8, 0.22)
+          const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.3, 6), mat('#ff9f3a'))
+          beak.rotation.x = Math.PI / 2
+          beak.position.set(0, 1.35, 0.42)
+          p.add(b, belly, beak)
+          p.position.z = k * 1.6
+          waddle.add(p)
+        }
+        body.add(waddle)
+        body.userData.waddle = waddle
+      } else {
+        const roll = new THREE.Group()
+        const geo = c.kind === 'gumball' ? new THREE.SphereGeometry(c.height / 2, 14, 10) : new THREE.DodecahedronGeometry(c.height / 2, 0)
+        roll.add(new THREE.Mesh(geo, mat(c.kind === 'gumball' ? ['#ff5fa2', '#7fe0ff', '#ffe066'][this.crosserViews.length % 3] : '#8c6b52')))
+        roll.position.y = c.height / 2
+        body.add(roll)
+        body.userData.roll = roll
+      }
+      body.traverse(o => ((o as THREE.Mesh).castShadow = true))
+      this.group.add(body)
+      // Warning posts on both sides.
+      const lights: THREE.Mesh[] = []
+      const at = this.main.at(c.s)
+      for (const side of [-1, 1]) {
+        const base = at.pos.clone().addScaledVector(at.right, side * (WALL + 1.2)).addScaledVector(at.tan, -c.depth / 2 - 1.2)
+        const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.4, 6), post)
+        pole.position.copy(base).setY(base.y + 1.7)
+        this.group.add(pole)
+        for (const k of [-1, 1]) {
+          const l = new THREE.Mesh(new THREE.CircleGeometry(0.32, 12), new THREE.MeshBasicMaterial({ color: '#401010', toneMapped: false, side: THREE.DoubleSide }))
+          l.position.copy(base).addScaledVector(at.right, k * 0.42).setY(base.y + 3.1)
+          l.rotation.y = Math.atan2(at.tan.x, at.tan.z) + Math.PI
+          this.group.add(l)
+          lights.push(l)
+        }
+      }
+      this.crosserViews.push({ body, lights })
+    }
+  }
+
+  private buildGeysers(): void {
+    const tone = { campus: '#e8f6ff', desert: '#3a2a20', snow: '#bfefff', candy: '#ff8ad0', neon: '#2bf3ff', volcano: '#ff5a1f' }[this.theme.id]
+    const colMat = new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.8, toneMapped: false })
+    for (const g of this.geysers) {
+      const at = this.main.pointAt(g.s, g.lateral)
+      const root = new THREE.Group()
+      root.position.copy(at)
+      const ring = new THREE.Mesh(new THREE.RingGeometry(g.radius - 0.5, g.radius, 24), new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.45, toneMapped: false, side: THREE.DoubleSide }))
+      ring.rotation.x = -Math.PI / 2
+      ring.position.y = 0.07
+      const vent = new THREE.Mesh(new THREE.CircleGeometry(g.radius - 0.5, 20), new THREE.MeshBasicMaterial({ color: '#141418' }))
+      vent.rotation.x = -Math.PI / 2
+      vent.position.y = 0.06
+      const column = new THREE.Mesh(new THREE.CylinderGeometry(g.radius * 0.55, g.radius * 0.8, 1, 12, 1, true), colMat)
+      const cap = new THREE.Mesh(new THREE.IcosahedronGeometry(g.radius * 0.9, 1), colMat)
+      root.add(ring, vent, column, cap)
+      this.group.add(root)
+      this.geyserViews.push({ column, cap, ring })
+    }
+  }
+
+  private buildSlick(): void {
+    for (const sl of this.slick) {
+      const pos: number[] = []
+      for (let s = sl.from; s <= sl.to; s += 2) {
+        const a = this.main.pointAt(s, -HALF_WIDTH + 0.9)
+        const b = this.main.pointAt(s, HALF_WIDTH - 0.9)
+        pos.push(a.x, a.y + 0.05, a.z, b.x, b.y + 0.05, b.z)
+      }
+      const idx: number[] = []
+      for (let i = 0; i < pos.length / 6 - 1; i += 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2)
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+      geo.setIndex(idx)
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: this.theme.road.slick, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }))
+      mesh.renderOrder = 1
+      this.group.add(mesh)
+    }
+  }
+
   /** Presses that are down or about to drop, for the AI to steer around. */
   pressObstacles(time: number): { position: THREE.Vector3; radius: number; hazard: boolean }[] {
     const out: { position: THREE.Vector3; radius: number; hazard: boolean }[] = []
@@ -403,6 +735,12 @@ export class Track {
   }
 
   // ─── geometry ─────────────────────────────────────────────────────────
+
+  private sprinkle(i: number, j: number): THREE.Color {
+    const h = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453
+    const r = h - Math.floor(h)
+    return r > 0.8 ? this.c.sprinkles[Math.floor(r * 50) % this.c.sprinkles.length] : this.c.shoulder
+  }
 
   private insideShortFootprint(p: THREE.Vector3, margin: number): boolean {
     if (!this.shortBox.containsPoint(p)) return false
@@ -418,13 +756,13 @@ export class Track {
     const sp = this.main
     const hw = HALF_WIDTH
     const bands: { a: number; b: number; color: (i: number, j: number) => THREE.Color; y?: number }[] = [
-      { a: -hw - SHOULDER, b: -hw, color: (i, j) => sprinkle(i, j) },
-      { a: -hw, b: -hw + 0.9, color: i => (Math.floor(i / 2) % 2 ? KERB_A : KERB_B), y: 0.03 },
-      { a: -hw + 0.9, b: -0.18, color: (i, j) => ((i * 7 + j) % 5 === 0 ? ROAD_2 : ROAD) },
-      { a: -0.18, b: 0.18, color: i => (Math.floor(i / 3) % 2 ? LANE : ROAD) },
-      { a: 0.18, b: hw - 0.9, color: (i, j) => ((i * 5 + j) % 7 === 0 ? ROAD_2 : ROAD) },
-      { a: hw - 0.9, b: hw, color: i => (Math.floor(i / 2) % 2 ? KERB_B : KERB_A), y: 0.03 },
-      { a: hw, b: hw + SHOULDER, color: (i, j) => sprinkle(i + 3, j) },
+      { a: -hw - SHOULDER, b: -hw, color: (i, j) => this.sprinkle(i, j) },
+      { a: -hw, b: -hw + 0.9, color: i => (Math.floor(i / 2) % 2 ? this.c.kerbA : this.c.kerbB), y: 0.03 },
+      { a: -hw + 0.9, b: -0.18, color: (i, j) => ((i * 7 + j) % 5 === 0 ? this.c.road2 : this.c.road) },
+      { a: -0.18, b: 0.18, color: i => (Math.floor(i / 3) % 2 ? this.c.lane : this.c.road) },
+      { a: 0.18, b: hw - 0.9, color: (i, j) => ((i * 5 + j) % 7 === 0 ? this.c.road2 : this.c.road) },
+      { a: hw - 0.9, b: hw, color: i => (Math.floor(i / 2) % 2 ? this.c.kerbB : this.c.kerbA), y: 0.03 },
+      { a: hw, b: hw + SHOULDER, color: (i, j) => this.sprinkle(i + 3, j) },
     ]
     const geo = ribbon(sp, bands, 2, 2, 0, (_p, s) => this.inGap(s))
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 }))
@@ -437,15 +775,16 @@ export class Track {
     const sp = this.short
     const L = sp.length
     const hw = SHORT_HALF
+    const fluff2 = this.c.fluff.clone().multiplyScalar(0.92)
     const fluffAt = (i: number) => {
       const f = (i * 2) / L
       return f > this.fluff.from && f < this.fluff.to
     }
     const bands = [
-      { a: -hw - 0.7, b: -hw, color: (i: number) => (Math.floor(i / 2) % 2 ? KERB_A : KERB_B), y: 0.03 },
-      { a: -hw, b: 0, color: (i: number, j: number) => (fluffAt(i) ? (j % 2 ? FLUFF : new THREE.Color('#c4dce9')) : CARAMEL) },
-      { a: 0, b: hw, color: (i: number, j: number) => (fluffAt(i) ? (j % 2 ? new THREE.Color('#c4dce9') : FLUFF) : CARAMEL) },
-      { a: hw, b: hw + 0.7, color: (i: number) => (Math.floor(i / 2) % 2 ? KERB_B : KERB_A), y: 0.03 },
+      { a: -hw - 0.7, b: -hw, color: (i: number) => (Math.floor(i / 2) % 2 ? this.c.kerbA : this.c.kerbB), y: 0.03 },
+      { a: -hw, b: 0, color: (i: number, j: number) => (fluffAt(i) ? (j % 2 ? this.c.fluff : fluff2) : this.c.caramel) },
+      { a: 0, b: hw, color: (i: number, j: number) => (fluffAt(i) ? (j % 2 ? fluff2 : this.c.fluff) : this.c.caramel) },
+      { a: hw, b: hw + 0.7, color: (i: number) => (Math.floor(i / 2) % 2 ? this.c.kerbB : this.c.kerbA), y: 0.03 },
     ]
     const geo = ribbon(sp, bands, 2, 2, -0.03, (p: THREE.Vector3) => this.insideMainFootprint(p, -0.4))
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 }))
@@ -455,7 +794,7 @@ export class Track {
 
     // Safety blocks along the slick workshop-floor detour (visual only).
     const puffGeo = new THREE.BoxGeometry(0.72, 0.16, 0.72)
-    const puffs = new THREE.InstancedMesh(puffGeo, new THREE.MeshStandardMaterial({ color: '#ffc400', flatShading: true, roughness: 0.8 }), 80)
+    const puffs = new THREE.InstancedMesh(puffGeo, new THREE.MeshStandardMaterial({ color: this.theme.railB, flatShading: true, roughness: 0.8 }), 80)
     const m = new THREE.Matrix4()
     let n = 0
     for (let s = L * this.fluff.from; s < L * this.fluff.to && n < 80; s += 1.3) {
@@ -521,7 +860,7 @@ export class Track {
           const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir)
           this.physics.addStaticBox(center, new THREE.Vector3(1, 6, len + 0.5), q, 0, wallGroups)
           // Visual candy-cane rail.
-          const col = k % 2 ? KERB_A : KERB_B
+          const col = k % 2 ? this.c.railA : this.c.railB
           rail(positions, colors, pa, pb, a.right, b.right, side, col)
           if (k % 4 === 0) posts.push(pa)
         }
@@ -653,8 +992,11 @@ export class Track {
   }
 
   /** Deck slab, piers and lamp posts for the high bridge over the north lake. */
-  private buildBridge(): void {
-    const { from, to } = this.bridge
+  private buildBridges(): void {
+    for (const b of this.bridges) this.buildBridge(b.from, b.to)
+  }
+
+  private buildBridge(from: number, to: number): void {
     const deckMat = new THREE.MeshStandardMaterial({ color: '#8fa3b3', flatShading: true, roughness: 0.8 })
     const pierMat = new THREE.MeshStandardMaterial({ color: '#dbe7f2', flatShading: true, roughness: 0.7 })
     const beamMat = new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.5 })
@@ -697,8 +1039,12 @@ export class Track {
   }
 
   /** SENAI workshop hall over the road, with three stamping presses hanging from its gantries. */
-  private buildWorkshop(): void {
-    const { from, to } = this.tunnel
+  private buildHalls(): void {
+    for (const h of this.halls) this.buildWorkshop(h.from, h.to, h.label)
+    this.buildPresses()
+  }
+
+  private buildWorkshop(from: number, to: number, label: string): void {
     const frameMat = new THREE.MeshStandardMaterial({ color: '#1e4d6b', flatShading: true, roughness: 0.55 })
     const roofMat = new THREE.MeshStandardMaterial({ color: '#dce6eb', flatShading: true, roughness: 0.8, side: THREE.DoubleSide })
     const lightMat = new THREE.MeshBasicMaterial({ color: '#fff6d8', toneMapped: false })
@@ -736,12 +1082,15 @@ export class Track {
     // Hall entrance signs.
     for (const [s, flip] of [[from - 3, 0], [to + 3, Math.PI]] as const) {
       const smp = this.main.at(s)
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(12, 1.6, 0.25), new THREE.MeshStandardMaterial({ map: labelTexture('OFICINA DE PRENSAS'), roughness: 0.6 }))
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(12, 1.6, 0.25), new THREE.MeshStandardMaterial({ map: labelTexture(label, this.theme.gate.beam), roughness: 0.6 }))
       sign.position.copy(smp.pos).setY(smp.pos.y + H + 1.3)
       sign.rotation.y = Math.atan2(smp.tan.x, smp.tan.z) + Math.PI + flip
       this.group.add(sign)
     }
-    // Presses.
+  }
+
+  private buildPresses(): void {
+    const H = 8.5
     const stripes = hazardTexture()
     const headMat = new THREE.MeshStandardMaterial({ map: stripes, flatShading: true, roughness: 0.5 })
     const plateMat = new THREE.MeshStandardMaterial({ color: '#4a5c6a', flatShading: true, roughness: 0.4, metalness: 0.3 })
@@ -800,11 +1149,7 @@ export class Track {
   }
 }
 
-function sprinkle(i: number, j: number): THREE.Color {
-  const h = Math.sin(i * 12.9898 + j * 78.233) * 43758.5453
-  const r = h - Math.floor(h)
-  return r > 0.8 ? SPRINKLES[Math.floor(r * 50) % SPRINKLES.length] : SHOULDER_BASE
-}
+
 
 /** Non-indexed flat-shaded ribbon along a spline with coloured lateral bands. */
 function ribbon(
@@ -898,12 +1243,12 @@ function hazardTexture(): THREE.CanvasTexture {
   return tex
 }
 
-function labelTexture(text: string): THREE.CanvasTexture {
+function labelTexture(text: string, background = '#e30613'): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = 512
   c.height = 72
   const g = c.getContext('2d')!
-  g.fillStyle = '#e30613'
+  g.fillStyle = background
   g.fillRect(0, 0, 512, 72)
   g.fillStyle = '#ffffff'
   g.font = '900 42px sans-serif'

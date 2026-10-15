@@ -6,12 +6,17 @@ import { ROSTER, characterById } from '../game/characters'
 import { ITEM_KINDS, type ItemKind } from '../game/config'
 import type { Hint, HudState, RaceResult } from '../game/game'
 import { formatTime, ordinalSuffix } from '../game/rules'
+import { THEMES } from '../game/themes'
+import { TRACKS, trackById, type TrackDef } from '../game/tracks'
+import { TrackSpline } from '../engine/spline'
 import { ICON, ITEM_ICONS, PAD_GLYPH, keyCap } from './icons'
 
-export type Screen = 'boot' | 'title' | 'select' | 'lobby' | 'hud' | 'pause' | 'settings' | 'leaderboard' | 'results'
+export type Screen = 'boot' | 'title' | 'tracks' | 'select' | 'lobby' | 'hud' | 'pause' | 'settings' | 'leaderboard' | 'results'
 
 export type UiActions = {
   race(): void
+  /** A circuit was picked on the track screen (loads it, then goes to racer select). */
+  trackChanged(id: string): void
   selectChanged(id: string): void
   /** One racer per local player; with several, each player's device too. */
   startRace(racers: string[], devices: Device[]): void
@@ -116,6 +121,16 @@ export class Ui {
       </section>`),
     )
     add(
+      'tracks',
+      h(`<section>
+        <div class="tracks-wrap">
+          <h2 class="panel-title tracks-title" data-i18n="tracks.title"></h2>
+          <div class="track-cards" data-track-cards></div>
+          <div class="tracks-actions"><button class="btn" data-nav data-act="back"><span data-i18n="menu.back"></span></button></div>
+        </div>
+      </section>`),
+    )
+    add(
       'select',
       h(`<section>
         <div class="select-left panel">
@@ -201,6 +216,7 @@ export class Ui {
     })
     this.mapCanvas = this.q('hud', '[data-minimap]') as HTMLCanvasElement
     this.buildCards()
+    this.buildTrackCards()
     this.buildSettings()
     this.updatePlayersBtn()
     this.relabel()
@@ -250,6 +266,10 @@ export class Ui {
         break
       case 'pick':
         this.pick(el.dataset.id!)
+        break
+      case 'pick-track':
+        this.audio.play('uiSelect')
+        this.actions.trackChanged(el.dataset.id!)
         break
       case 'players':
         this.playerCount = (this.playerCount % MAX_PLAYERS) + 1
@@ -307,8 +327,11 @@ export class Ui {
       case 'leaderboard':
         this.show('title')
         break
-      case 'select':
+      case 'tracks':
         this.actions.backToTitle()
+        break
+      case 'select':
+        this.show('tracks')
         break
       case 'lobby':
         this.show('select')
@@ -326,6 +349,7 @@ export class Ui {
     if (screen === 'title') this.refreshTitle()
     if (screen === 'pause') this.refreshPadStatus()
     if (screen === 'lobby') this.renderLobby()
+    if (screen === 'tracks') requestAnimationFrame(() => this.current().querySelector<HTMLElement>(`[data-id="${this.save.data.track}"]`)?.focus({ preventScroll: true }))
     if (screen === 'settings') this.refreshSettings()
     if (screen === 'select') this.pick(this.selected, true)
     if (screen === 'hud') {
@@ -367,6 +391,7 @@ export class Ui {
     for (const el of this.root.querySelectorAll<HTMLElement>('[data-i18n]')) el.textContent = this.t(el.dataset.i18n!)
     document.title = `${this.t('game.title')} · SENAI Pompéia`
     this.buildCards()
+    this.buildTrackCards()
     this.buildSettings()
     this.updatePlayersBtn()
     this.refreshTitle()
@@ -375,6 +400,26 @@ export class Ui {
     if (this.screen === 'results' && this.result) this.renderResults(this.result)
     this.prompts()
     this.hintKey !== 'none' && this.hint(this.hintKey)
+  }
+
+  // ─── track select ────────────────────────────────────────────────
+
+  private buildTrackCards(): void {
+    const wrap = this.screens.get('tracks')?.querySelector<HTMLElement>('[data-track-cards]')
+    if (!wrap) return
+    wrap.innerHTML = TRACKS.map(def => {
+      const theme = THEMES[def.theme]
+      const chips = trackHazards(def)
+        .map(k => `<span class="hz">${esc(this.t(`hz.${k}`))}</span>`)
+        .join('')
+      return `<button class="track-card" data-nav data-act="pick-track" data-id="${def.id}" style="--c:${theme.road.kerbA};--bg:${theme.sky.fog}">
+        <span class="track-thumb">${trackThumb(def)}</span>
+        <span class="track-name">${esc(this.t(`track.${def.id}.name`))}</span>
+        <span class="track-meta">${esc(this.t(`theme.${def.theme}`))} · ${(trackLength(def) / 1000).toFixed(1)} km</span>
+        <span class="track-blurb">${esc(this.t(`track.${def.id}.blurb`))}</span>
+        <span class="track-hz">${chips}</span>
+      </button>`
+    }).join('')
   }
 
   private updatePlayersBtn(): void {
@@ -504,7 +549,7 @@ export class Ui {
   }
 
   private refreshTitle(): void {
-    const best = this.save.data.leaderboard[0]
+    const best = this.save.data.leaderboard.find(e => e.track === this.save.data.track)
     const el = this.q('title', '[data-best]')
     el.textContent = best ? this.t('menu.best', { time: formatTime(best.time) }) : ''
     this.prompts()
@@ -628,7 +673,9 @@ export class Ui {
   // ─── leaderboard ─────────────────────────────────────────────────
 
   private renderBoard(): void {
-    const board = this.save.data.leaderboard
+    const track = this.save.data.track
+    const board = this.save.data.leaderboard.filter(e => e.track === track)
+    this.q('leaderboard', '.panel-title').textContent = `${this.t('board.title')} · ${this.t(`track.${trackById(track).id}.name`)}`
     const el = this.q('leaderboard', '[data-board]')
     if (!board.length) {
       el.innerHTML = `<p class="empty">${esc(this.t('board.empty'))}</p>`
@@ -718,7 +765,7 @@ export class Ui {
     const input = this.current().querySelector<HTMLInputElement>('[data-name]')
     const name = (input?.value.trim() || 'PLAYER').slice(0, 16)
     const r = this.result
-    const { board, rank } = insertEntry(this.save.data.leaderboard, { name, character: r.character, time: r.time, place: r.place, bestLap: r.bestLap, at: Date.now() })
+    const { board, rank } = insertEntry(this.save.data.leaderboard, { name, character: r.character, time: r.time, place: r.place, bestLap: r.bestLap, at: Date.now(), track: this.save.data.track })
     this.save.update({ leaderboard: board, playerName: name })
     this.resultSaved = true
     this.savedRank = rank
@@ -1164,4 +1211,45 @@ function retrigger(el: HTMLElement, cls: string): void {
   el.classList.remove(cls)
   void el.offsetWidth
   el.classList.add(cls)
+}
+
+const lengthCache = new Map<string, number>()
+function trackLength(def: TrackDef): number {
+  let L = lengthCache.get(def.id)
+  if (L === undefined) {
+    L = new TrackSpline(def.points.map(([x, z, y]) => ({ x, y, z })), { closed: true, step: 4 }).length
+    lengthCache.set(def.id, L)
+  }
+  return L
+}
+
+/** Which set pieces a circuit has, for the chips on its card. */
+function trackHazards(def: TrackDef): string[] {
+  const out: string[] = []
+  if (def.ramps?.some(r => r.gap)) out.push('gap')
+  else if (def.ramps?.length) out.push('ramp')
+  if (def.bridges?.length) out.push('bridge')
+  if (def.halls?.length) out.push('press')
+  if (def.spinners?.length) out.push('spinner')
+  for (const k of new Set((def.movers ?? []).map(m => (m.kind === 'car' || m.kind === 'bus' ? 'traffic' : m.kind === 'cart' ? 'carts' : m.kind)))) out.push(k)
+  for (const k of new Set((def.crossers ?? []).map(c => c.kind))) out.push(`x${k}`)
+  if (def.geysers?.length) out.push('geyser')
+  if (def.slick?.length) out.push(`slick_${def.theme}`)
+  return out
+}
+
+/** Small top-down outline of a circuit, as inline SVG. */
+function trackThumb(def: TrackDef): string {
+  const sp = new TrackSpline(def.points.map(([x, z, y]) => ({ x, y, z })), { closed: true, step: 6 })
+  const xs = sp.samples.map(p => p.pos.x)
+  const zs = sp.samples.map(p => p.pos.z)
+  const [minX, maxX, minZ, maxZ] = [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)]
+  const W = 200
+  const H = 120
+  const k = Math.min((W - 24) / (maxX - minX), (H - 24) / (maxZ - minZ))
+  const ox = (W - (maxX - minX) * k) / 2
+  const oz = (H - (maxZ - minZ) * k) / 2
+  const pts = sp.samples.map(p => `${(W - (ox + (p.pos.x - minX) * k)).toFixed(1)},${(oz + (p.pos.z - minZ) * k).toFixed(1)}`).join(' ')
+  const s0 = sp.samples[0].pos
+  return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><polygon points="${pts}" fill="none" stroke="#2b1633" stroke-width="9" stroke-linejoin="round"/><polygon points="${pts}" fill="none" stroke="#fff6ec" stroke-width="4.5" stroke-linejoin="round"/><circle cx="${(W - (ox + (s0.x - minX) * k)).toFixed(1)}" cy="${(oz + (s0.z - minZ) * k).toFixed(1)}" r="5" fill="var(--c)" stroke="#2b1633" stroke-width="2"/></svg>`
 }

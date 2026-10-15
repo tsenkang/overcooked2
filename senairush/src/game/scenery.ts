@@ -3,13 +3,13 @@ import * as THREE from 'three'
 /** Non-indexed copy for per-face shading/colors (skips geometries that are already flat). */
 const flat = (g: THREE.BufferGeometry): THREE.BufferGeometry => (g.index ? g.toNonIndexed() : g)
 import { TOON } from './kartModel'
-import { BRIDGE_LAKE, SHORT_WALL, WALL, type Track } from './track'
+import { SHORT_WALL, WALL, type Track } from './track'
 
 /**
- * SENAI Pompéia campus scenery: gradient sky, warm key light that follows the camera, a flat-shaded
- * terrain that is flattened around the circuit, reflective training courtyards, campus landscaping, distant
- * workshop blocks, a SENAI gate landmark, the start gantry and bouncing spectators.
- * Everything is procedural; one seeded RNG keeps the layout identical between sessions.
+ * Themed scenery around any circuit: gradient sky, key light that follows the camera, a flat-shaded
+ * terrain in a valley that is flattened around the road, lakes, themed props (campus, desert,
+ * snow, candy, neon city, volcano), the landmark gate, the start gantry and bouncing spectators.
+ * Everything is procedural; a seeded RNG per track keeps each layout identical between sessions.
  */
 export type Scenery = {
   sun: THREE.DirectionalLight
@@ -52,13 +52,6 @@ function fbm(x: number, z: number): number {
   return vnoise(x, z) * 0.55 + vnoise(x * 2.1, z * 2.1) * 0.3 + vnoise(x * 4.3, z * 4.3) * 0.15
 }
 
-const LAKES = [
-  { x: -112, z: -108, r: 21 },
-  { x: 47, z: -64, r: 10 },
-  { x: 92, z: 36, r: 22 },
-  BRIDGE_LAKE,
-]
-
 /** Spatial hash of centre-line samples for fast "distance to the road" queries. */
 class RoadField {
   private cells = new Map<string, { x: number; z: number; y: number; w: number; bridge: boolean; gap: boolean }[]>()
@@ -67,7 +60,7 @@ class RoadField {
       for (let i = 0; i < sp.samples.length; i += 2) {
         const smp = sp.samples[i]
         const p = smp.pos
-        const bridge = sp === track.main && smp.s > track.bridge.from && smp.s < track.bridge.to
+        const bridge = sp === track.main && track.inBridge(smp.s)
         const gap = sp === track.main && track.inGap(smp.s)
         const k = `${Math.floor(p.x / size)},${Math.floor(p.z / size)}`
         let list = this.cells.get(k)
@@ -106,12 +99,26 @@ class RoadField {
 }
 
 export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: number): Scenery {
-  const rand = rng(20260926)
+  const theme = track.theme
+  const LAKES = track.lakes
+  let seed = 20260926
+  for (const ch of track.def.id) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0
+  const rand = rng(seed)
   const field = new RoadField(track)
+  // Valley sized to the circuit.
+  const bb = new THREE.Box3()
+  for (const smp of track.main.samples) bb.expandByPoint(smp.pos)
+  for (const smp of track.short.samples) bb.expandByPoint(smp.pos)
+  const CX = (bb.min.x + bb.max.x) / 2
+  const CZ = (bb.min.z + bb.max.z) / 2
+  const RX = (bb.max.x - bb.min.x) / 2 + WALL
+  const RZ = (bb.max.z - bb.min.z) / 2 + WALL
+  const RFAR = Math.max(RX, RZ)
 
   // ── sky & fog ───────────────────────────────────────────────
-  scene.fog = new THREE.Fog('#a8c2d4', 190, 640)
-  scene.background = new THREE.Color('#a8c2d4')
+  scene.fog = new THREE.Fog(theme.sky.fog, theme.sky.fogNear, theme.sky.fogFar)
+  scene.background = new THREE.Color(theme.sky.fog)
+  const vec = (c: [number, number, number]) => `vec3(${c.map(n => n.toFixed(3)).join(', ')})`
   const sky = new THREE.Mesh(
     new THREE.SphereGeometry(900, 32, 16),
     new THREE.ShaderMaterial({
@@ -123,9 +130,9 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
       fragmentShader: `varying vec3 vDir; uniform vec3 uSun;
         void main(){
           float h = clamp(vDir.y, -0.2, 1.0);
-          vec3 top = vec3(0.16, 0.36, 0.58);
-          vec3 mid = vec3(0.48, 0.68, 0.80);
-          vec3 hor = vec3(0.90, 0.95, 0.98);
+          vec3 top = ${vec(theme.sky.top)};
+          vec3 mid = ${vec(theme.sky.mid)};
+          vec3 hor = ${vec(theme.sky.horizon)};
           vec3 col = mix(hor, mid, smoothstep(0.0, 0.25, h));
           col = mix(col, top, smoothstep(0.25, 0.9, h));
           float s = max(dot(normalize(vDir), uSun), 0.0);
@@ -138,8 +145,8 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   scene.add(sky)
 
   // ── lights ──────────────────────────────────────────────────
-  scene.add(new THREE.HemisphereLight('#eef7ff', '#5f7589', 0.95))
-  const sun = new THREE.DirectionalLight('#fff2cf', 2.75)
+  scene.add(new THREE.HemisphereLight(theme.light.hemiSky, theme.light.hemiGround, theme.light.hemiIntensity))
+  const sun = new THREE.DirectionalLight(theme.light.sun, theme.light.sunIntensity)
   sun.castShadow = true
   const sc = sun.shadow.camera
   sc.left = sc.bottom = -48
@@ -156,22 +163,20 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   scene.add(rim)
 
   // ── terrain ─────────────────────────────────────────────────
-  // Bounds cover the whole circuit (south campus + north loop) plus the valley rim.
-  const X0 = -300
-  const X1 = 240
-  const Z0 = -310
-  const Z1 = 220
-  const cell = 3.6
+  // Bounds cover the whole circuit plus the valley rim.
+  const X0 = Math.floor(bb.min.x - 140)
+  const X1 = Math.ceil(bb.max.x + 140)
+  const Z0 = Math.floor(bb.min.z - 140)
+  const Z1 = Math.ceil(bb.max.z + 140)
+  const cell = Math.max(3.6, Math.max(X1 - X0, Z1 - Z0) / 180)
   const nx = Math.ceil((X1 - X0) / cell)
   const nz = Math.ceil((Z1 - Z0) / cell)
   const heights = new Float32Array((nx + 1) * (nz + 1))
   const heightAt = (x: number, z: number) => {
     let h = fbm(x * 0.012, z * 0.012) * 16 - 4 + fbm(x * 0.05 + 7, z * 0.05) * 2.5
     // Rise toward the valley rim so the circuit sits in a bowl.
-    const cx = x + 28
-    const cz = z + 32
-    const rad = Math.hypot(cx * 0.95, cz * 0.9)
-    h += THREE.MathUtils.smoothstep(rad, 170, 270) * 26
+    const rad = Math.hypot((x - CX) / RX, (z - CZ) / RZ)
+    h += THREE.MathUtils.smoothstep(rad, 1.12, 1.75) * theme.terrain.rim
     for (const l of LAKES) {
       const d = Math.hypot(x - l.x, z - l.z)
       h = Math.min(h, THREE.MathUtils.lerp(-3.2, h, THREE.MathUtils.smoothstep(d, l.r * 0.55, l.r * 1.45)))
@@ -191,12 +196,12 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   for (let j = 0; j <= nz; j += 1) for (let i = 0; i <= nx; i += 1) heights[j * (nx + 1) + i] = heightAt(X0 + i * cell, Z0 + j * cell)
   const tpos: number[] = []
   const tcol: number[] = []
-  const grassA = new THREE.Color('#6f8f87')
-  const grassB = new THREE.Color('#8fb59f')
-  const pinkish = new THREE.Color('#7fa6bb')
-  const sand = new THREE.Color('#b9c9d1')
-  const frost = new THREE.Color('#e6eef4')
-  const lilac = new THREE.Color('#667f9a')
+  const grassA = new THREE.Color(theme.terrain.a)
+  const grassB = new THREE.Color(theme.terrain.b)
+  const pinkish = new THREE.Color(theme.terrain.high)
+  const sand = new THREE.Color(theme.terrain.shore)
+  const frost = new THREE.Color(theme.terrain.peak)
+  const lilac = new THREE.Color(theme.terrain.low)
   const tmpC = new THREE.Color()
   const pushTri = (ax: number, az: number, bx: number, bz: number, cx2: number, cz2: number, ha: number, hb: number, hc: number) => {
     tpos.push(ax, ha, az, bx, hb, bz, cx2, hc, cz2)
@@ -241,13 +246,13 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   under.position.y = 8
   under.renderOrder = -5
   // Far ring below the rim hides the terrain edge in the fog.
-  const ring = new THREE.Mesh(new THREE.RingGeometry(540, 1600, 48), new THREE.MeshBasicMaterial({ color: '#1e4d6b' }))
+  const ring = new THREE.Mesh(new THREE.RingGeometry(RFAR * 1.75 + 160, 2000, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(theme.terrain.low).multiplyScalar(0.7) }))
   ring.rotation.x = -Math.PI / 2
-  ring.position.set(-28, 18, -32)
+  ring.position.set(CX, theme.terrain.rim * 0.7, CZ)
   scene.add(ring)
 
   // ── training courtyards ──────────────────────────────────────────────
-  const waterMat = new THREE.MeshStandardMaterial({ color: '#2b9de9', emissive: '#176da9', emissiveIntensity: 0.25, roughness: 0.12, metalness: 0.1, transparent: true, opacity: 0.88, flatShading: true })
+  const waterMat = new THREE.MeshStandardMaterial({ color: theme.water.color, emissive: theme.water.emissive, emissiveIntensity: theme.water.glow, roughness: 0.12, metalness: 0.1, transparent: true, opacity: 0.88, flatShading: true })
   const waters: THREE.Mesh[] = []
   for (const l of LAKES) {
     const g = new THREE.CircleGeometry(l.r * 1.25, 28, 0, Math.PI * 2)
@@ -292,13 +297,17 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const v = new THREE.Vector3()
   const sv = new THREE.Vector3()
 
-  // Campus flags and marker boards.
-  const LOLLI = 90
+  const PROPS = theme.id
+  const candyLand = PROPS === 'candy'
+  if (PROPS === 'campus' || candyLand) {
+  if (candyLand) pastel.splice(0, pastel.length, ...['#ff5fa2', '#7fe0ff', '#ffe066', '#b58cff', '#6ff0b0', '#ffffff', '#ff9f3a'].map(c => new THREE.Color(c)))
+  // Campus flags and marker boards (candy: giant lollipops).
+  const LOLLI = candyLand ? 140 : 90
   const sticks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.16, 0.2, 1, 6), new THREE.MeshStandardMaterial({ color: '#dbe7f2', flatShading: true, roughness: 0.5 }), LOLLI)
   const candy = new THREE.InstancedMesh(lollipopGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.28 }), LOLLI)
   const nLolli = place(LOLLI, 3, 90, (x, z, y, i) => {
-    const h = 3.2 + rand() * 3
-    const r = 1.3 + rand() * 1.1
+    const h = (3.2 + rand() * 3) * (candyLand ? 1.8 : 1)
+    const r = (1.3 + rand() * 1.1) * (candyLand ? 1.7 : 1)
     m4.compose(v.set(x, y + h / 2, z), q.identity(), sv.set(1, h, 1))
     sticks.setMatrixAt(i, m4)
     q.setFromEuler(new THREE.Euler(0, rand() * Math.PI * 2, (rand() - 0.5) * 0.2))
@@ -351,6 +360,8 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   mallow.receiveShadow = true
   scene.add(mallow)
 
+  }
+  if (PROPS === 'campus') {
   // Quarry rock spires along the south-west canyon.
   const ROCKS = 70
   const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.95 }), ROCKS)
@@ -381,9 +392,9 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const cupCols = ['#6b8798', '#9ab2c1', '#4f7188', '#d7e2e8', '#e30613']
   for (let i = 0; i < 11; i += 1) {
     const a = (i / 11) * Math.PI * 2 + 0.3
-    const R = 440 + (i % 3) * 40
-    const x = -28 + Math.cos(a) * R * 1.05
-    const z = -32 + Math.sin(a) * R
+    const R = RFAR * 1.6 + 60 + (i % 3) * 40
+    const x = CX + Math.cos(a) * R
+    const z = CZ + Math.sin(a) * R
     const s = 28 + (i % 4) * 9
     const cup = cupcake(cupCols[i % cupCols.length], s)
     cup.position.set(x, 8 + (i % 2) * 6, z)
@@ -392,12 +403,19 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   }
   scene.add(cupcakes)
   buildCampusStructures(scene, track)
+  }
+  const ctx: PropCtx = { scene, track, rand, place, heightAt, field, CX, CZ, RFAR }
+  if (PROPS === 'desert') desertProps(ctx)
+  if (PROPS === 'snow') snowProps(ctx)
+  if (PROPS === 'candy') candyProps(ctx)
+  if (PROPS === 'neon') neonProps(ctx)
+  if (PROPS === 'volcano') volcanoProps(ctx)
 
   // High coastal clouds.
   const clouds = new THREE.Group()
-  const cloudMat = new THREE.MeshStandardMaterial({ color: '#f3f8fb', emissive: '#dbe7f2', emissiveIntensity: 0.35, flatShading: true, roughness: 1, fog: true })
+  const cloudMat = new THREE.MeshStandardMaterial({ color: theme.sky.clouds ?? '#000000', emissive: theme.sky.clouds ?? '#000000', emissiveIntensity: 0.3, flatShading: true, roughness: 1, fog: true })
   const puff = new THREE.IcosahedronGeometry(1, 1)
-  for (let i = 0; i < 18; i += 1) {
+  for (let i = 0; i < (theme.sky.clouds ? 18 : 0); i += 1) {
     const c = new THREE.Group()
     const n = 4 + Math.floor(rand() * 4)
     for (let k = 0; k < n; k += 1) {
@@ -407,7 +425,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
       m.position.set((k - n / 2) * 7 + rand() * 3, rand() * 3, rand() * 5)
       c.add(m)
     }
-    c.position.set(-320 + rand() * 600, 70 + rand() * 50, -340 + rand() * 560)
+    c.position.set(CX - RFAR * 1.4 + rand() * RFAR * 2.8, 70 + rand() * 50, CZ - RFAR * 1.4 + rand() * RFAR * 2.8)
     c.userData.speed = 1 + rand() * 2
     clouds.add(c)
   }
@@ -416,9 +434,9 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   // ── landmarks ───────────────────────────────────────────────
   // A stylised SENAI Pompéia gate marks the highest turn of the circuit.
   const gate = new THREE.Group()
-  const gateBlue = new THREE.MeshStandardMaterial({ color: '#1e4d6b', flatShading: true, roughness: 0.55 })
-  const gateRed = new THREE.MeshStandardMaterial({ color: '#e30613', flatShading: true, roughness: 0.45 })
-  const gateYellow = new THREE.MeshStandardMaterial({ color: '#ffc400', flatShading: true, roughness: 0.5 })
+  const gateBlue = new THREE.MeshStandardMaterial({ color: theme.gate.pillar, flatShading: true, roughness: 0.55 })
+  const gateRed = new THREE.MeshStandardMaterial({ color: theme.gate.beam, flatShading: true, roughness: 0.45 })
+  const gateYellow = new THREE.MeshStandardMaterial({ color: theme.gate.badge, flatShading: true, roughness: 0.5 })
   for (const side of [-1, 1]) {
     const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.8, 15, 2.8), gateBlue)
     pillar.position.set(side * 12, 7.5, 0)
@@ -433,16 +451,18 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   lintel.position.y = 14
   lintel.castShadow = true
   gate.add(lintel)
-  const gateSign = new THREE.Mesh(new THREE.BoxGeometry(20, 1.8, 0.18), new THREE.MeshStandardMaterial({ map: campusLabelTexture('SENAI POMPÉIA', '#e30613', '#ffffff'), roughness: 0.55 }))
+  const gateSign = new THREE.Mesh(new THREE.BoxGeometry(20, 1.8, 0.18), new THREE.MeshStandardMaterial({ map: campusLabelTexture(theme.gate.label, theme.gate.beam, '#ffffff'), roughness: 0.55 }))
   gateSign.position.set(0, 14, -1.7)
   gate.add(gateSign)
   const gateBadge = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 0.22, 8), gateYellow)
   gateBadge.rotation.x = Math.PI / 2
   gateBadge.position.set(0, 10.7, -1.72)
   gate.add(gateBadge)
-  gate.position.copy(track.landmarks.arch).setY(track.landmarks.arch.y - 1.5)
-  gate.rotation.y = track.landmarks.archYaw
-  scene.add(gate)
+  if (track.landmarks) {
+    gate.position.copy(track.landmarks.arch).setY(track.landmarks.arch.y - 1.5)
+    gate.rotation.y = track.landmarks.archYaw
+    scene.add(gate)
+  }
 
   // Start gantry: blue/yellow safety pillars and a SENAI race banner with the race lights.
   const gantry = new THREE.Group()
@@ -458,7 +478,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
     ball.position.copy(p.position).setY(p.position.y + 5.3)
     gantry.add(ball)
   }
-  const bannerTex = bannerTexture()
+  const bannerTex = bannerTexture(theme.banner, theme.gate.beam)
   const banner = new THREE.Mesh(new THREE.BoxGeometry((WALL + 1.1) * 2, 2.6, 0.6), [
     new THREE.MeshStandardMaterial({ color: '#e30613' }),
     new THREE.MeshStandardMaterial({ color: '#e30613' }),
@@ -561,7 +581,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
       for (const w of waters) w.position.y = (w.userData.baseY ?? -1.05) + Math.sin(time * 0.8 + w.position.x) * 0.06
       for (const c of clouds.children) {
         c.position.x += c.userData.speed * dt
-        if (c.position.x > 280) c.position.x = -320
+        if (c.position.x > CX + RFAR * 1.5) c.position.x = CX - RFAR * 1.5
       }
       const tmp = new THREE.Matrix4()
       for (let i = 0; i < fans.base.length; i += 1) {
@@ -624,7 +644,7 @@ function buildCampusStructures(scene: THREE.Scene, track: Track): void {
       const along = sample.tan.clone().setY(0).normalize()
       return [-1, 1].every(a => [-1, 1].every(b => {
         const p = c.clone().addScaledVector(along, (a * width) / 2).addScaledVector(sample.right, (b * depth) / 2)
-        const dry = LAKES.every(l => Math.hypot(p.x - l.x, p.z - l.z) > l.r * 1.4)
+        const dry = track.lakes.every(l => Math.hypot(p.x - l.x, p.z - l.z) > l.r * 1.4)
         return dry && track.main.closest(p).distance > WALL + 3 && track.short.closest(p).distance > SHORT_WALL + 3
       }))
     }
@@ -745,7 +765,7 @@ function campusLabelTexture(text: string, background: string, foreground: string
   return t
 }
 
-function bannerTexture(): THREE.CanvasTexture {
+function bannerTexture(text: string, fill: string): THREE.CanvasTexture {
   const c = document.createElement('canvas')
   c.width = 1024
   c.height = 128
@@ -756,7 +776,7 @@ function bannerTexture(): THREE.CanvasTexture {
     g.fillStyle = i % 2 ? '#ffc400' : '#ffffff'
     g.fillRect(i * 32, 112, 32, 16)
   }
-  g.fillStyle = '#e30613'
+  g.fillStyle = fill
   g.fillRect(0, 16, 1024, 96)
   g.font = '900 64px Sora, "Noto Sans SC", sans-serif'
   g.textAlign = 'center'
@@ -764,9 +784,9 @@ function bannerTexture(): THREE.CanvasTexture {
   g.lineWidth = 12
   g.strokeStyle = '#102a43'
   g.lineJoin = 'round'
-  g.strokeText('SENAI RUSH · SENAI 庞贝', 512, 66)
+  g.strokeText(text, 512, 66)
   g.fillStyle = '#ffffff'
-  g.fillText('SENAI RUSH · SENAI 庞贝', 512, 66)
+  g.fillText(text, 512, 66)
   const t = new THREE.CanvasTexture(c)
   t.colorSpace = THREE.SRGBColorSpace
   t.anisotropy = 4
@@ -798,6 +818,244 @@ function arrowTexture(): THREE.CanvasTexture {
   g.fill()
   g.stroke()
   const t = new THREE.CanvasTexture(c)
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
+}
+
+// ─── themed props ───────────────────────────────────────────────────
+
+type PropCtx = {
+  scene: THREE.Scene
+  track: Track
+  rand: () => number
+  place: (count: number, minRoad: number, maxRoad: number, fn: (x: number, z: number, y: number, i: number) => void) => number
+  heightAt: (x: number, z: number) => number
+  field: { query(x: number, z: number, reach?: number): { d: number; y: number } }
+  CX: number
+  CZ: number
+  RFAR: number
+}
+
+const std = (color: string, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 0.7, ...extra })
+
+/** Scatter one instanced prop near the road. */
+function scatter(ctx: PropCtx, geo: THREE.BufferGeometry, mat: THREE.Material, count: number, minRoad: number, maxRoad: number, size: (r: () => number) => [number, number], colors?: string[]): void {
+  const mesh = new THREE.InstancedMesh(geo, mat, count)
+  const m4 = new THREE.Matrix4()
+  const q = new THREE.Quaternion()
+  const cols = colors?.map(c => new THREE.Color(c))
+  mesh.count = ctx.place(count, minRoad, maxRoad, (x, z, y, i) => {
+    const [w, h] = size(ctx.rand)
+    m4.compose(new THREE.Vector3(x, y - 0.2, z), q.setFromEuler(new THREE.Euler(0, ctx.rand() * 6.28, 0)), new THREE.Vector3(w, h, w))
+    mesh.setMatrixAt(i, m4)
+    if (cols) mesh.setColorAt(i, cols[i % cols.length])
+  })
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  ctx.scene.add(mesh)
+}
+
+/** Geometry with its base at y = 0 and unit height. */
+function merged(parts: [THREE.BufferGeometry, string, [number, number, number]][]): THREE.BufferGeometry {
+  const geos = parts.map(([g, color, [x, y, z]]) => {
+    const f = flat(g.clone())
+    f.translate(x, y, z)
+    const c = new THREE.Color(color)
+    const n = f.attributes.position.count
+    const col = new Float32Array(n * 3)
+    for (let i = 0; i < n; i += 1) col.set([c.r, c.g, c.b], i * 3)
+    f.setAttribute('color', new THREE.BufferAttribute(col, 3))
+    for (const k of Object.keys(f.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'color') f.deleteAttribute(k)
+    return f
+  })
+  const total = geos.reduce((n, g) => n + g.attributes.position.count, 0)
+  const pos = new Float32Array(total * 3)
+  const col = new Float32Array(total * 3)
+  let o = 0
+  for (const g of geos) {
+    pos.set(g.attributes.position.array as Float32Array, o * 3)
+    col.set(g.attributes.color.array as Float32Array, o * 3)
+    o += g.attributes.position.count
+  }
+  const out = new THREE.BufferGeometry()
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  out.setAttribute('color', new THREE.BufferAttribute(col, 3))
+  out.computeVertexNormals()
+  return out
+}
+
+const vcol = (extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.7, ...extra })
+
+/** Big set pieces on the horizon ring. */
+function horizon(ctx: PropCtx, count: number, make: (i: number) => THREE.Object3D): void {
+  for (let i = 0; i < count; i += 1) {
+    const a = (i / count) * Math.PI * 2 + ctx.rand() * 0.3
+    const R = ctx.RFAR * 1.55 + 40 + ctx.rand() * 80
+    const o = make(i)
+    o.position.set(ctx.CX + Math.cos(a) * R, -2, ctx.CZ + Math.sin(a) * R)
+    o.rotation.y = ctx.rand() * 6
+    ctx.scene.add(o)
+  }
+}
+
+function desertProps(ctx: PropCtx): void {
+  const cactus = merged([
+    [new THREE.CylinderGeometry(0.35, 0.42, 1, 7), '#4f9a52', [0, 0.5, 0]],
+    [new THREE.CylinderGeometry(0.22, 0.22, 0.35, 6), '#4f9a52', [0.42, 0.55, 0]],
+    [new THREE.CylinderGeometry(0.2, 0.2, 0.32, 6), '#4f9a52', [0.58, 0.72, 0]],
+    [new THREE.CylinderGeometry(0.2, 0.2, 0.28, 6), '#4f9a52', [-0.4, 0.42, 0]],
+    [new THREE.CylinderGeometry(0.18, 0.18, 0.3, 6), '#4f9a52', [-0.55, 0.6, 0]],
+    [new THREE.SphereGeometry(0.12, 6, 4), '#ff6f9a', [0, 1.02, 0]],
+  ])
+  scatter(ctx, cactus, vcol(), 160, 3, 110, r => [1.4 + r() * 1.2, 4 + r() * 5])
+  scatter(ctx, new THREE.DodecahedronGeometry(1, 0), std('#b5653d', { roughness: 0.95 }), 120, 2, 120, r => [1 + r() * 3, 0.8 + r() * 2.5], ['#b5653d', '#c98b5a', '#8c4a2f'])
+  scatter(ctx, new THREE.IcosahedronGeometry(0.6, 0), std('#9c8a4c', { roughness: 1 }), 140, 1.5, 70, r => [0.6 + r() * 0.9, 0.5 + r() * 0.5])
+  // Flat-topped mesas on the horizon.
+  const mesaMat = std('#c2734a', { roughness: 0.95 })
+  const capMat = std('#a35a3a', { roughness: 0.95 })
+  horizon(ctx, 12, i => {
+    const g = new THREE.Group()
+    const w = 40 + (i % 4) * 18
+    const h = 40 + (i % 3) * 22
+    const body = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.8, w, h, 7), mesaMat)
+    body.position.y = h / 2
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.82, w * 0.82, 5, 7), capMat)
+    cap.position.y = h
+    g.add(body, cap)
+    return g
+  })
+}
+
+function snowProps(ctx: PropCtx): void {
+  const pine = merged([
+    [new THREE.CylinderGeometry(0.12, 0.16, 0.25, 6), '#5b3b2a', [0, 0.12, 0]],
+    [new THREE.ConeGeometry(0.55, 0.45, 7), '#1f5e4a', [0, 0.42, 0]],
+    [new THREE.ConeGeometry(0.42, 0.38, 7), '#26705a', [0, 0.65, 0]],
+    [new THREE.ConeGeometry(0.28, 0.32, 7), '#2d8068', [0, 0.85, 0]],
+    [new THREE.ConeGeometry(0.15, 0.14, 7), '#ffffff', [0, 0.97, 0]],
+  ])
+  scatter(ctx, pine, vcol(), 260, 3, 130, r => [4 + r() * 4, 7 + r() * 9])
+  const snowman = merged([
+    [new THREE.SphereGeometry(0.42, 10, 8), '#ffffff', [0, 0.38, 0]],
+    [new THREE.SphereGeometry(0.3, 10, 8), '#ffffff', [0, 0.85, 0]],
+    [new THREE.SphereGeometry(0.2, 10, 8), '#ffffff', [0, 1.2, 0]],
+    [new THREE.ConeGeometry(0.05, 0.22, 6), '#ff8a2b', [0, 1.2, 0.2]],
+    [new THREE.CylinderGeometry(0.14, 0.16, 0.18, 8), '#1d232b', [0, 1.42, 0]],
+  ])
+  scatter(ctx, snowman, vcol(), 30, 4, 40, r => [1.6 + r() * 0.8, 1.6 + r() * 0.8])
+  scatter(ctx, new THREE.DodecahedronGeometry(1, 0), std('#8794a3', { roughness: 0.9 }), 80, 2, 110, r => [1 + r() * 2.5, 0.8 + r() * 2], ['#8794a3', '#a5b2c0', '#6f7b89'])
+  const peak = std('#a5b2c0', { roughness: 0.9 })
+  const cap = std('#ffffff', { roughness: 0.6 })
+  horizon(ctx, 14, i => {
+    const g = new THREE.Group()
+    const h = 120 + (i % 4) * 40
+    const w = 70 + (i % 3) * 30
+    const m = new THREE.Mesh(new THREE.ConeGeometry(w, h, 6), peak)
+    m.position.y = h / 2
+    const top = new THREE.Mesh(new THREE.ConeGeometry(w * 0.38, h * 0.38, 6), cap)
+    top.position.y = h * 0.81
+    g.add(m, top)
+    return g
+  })
+}
+
+function candyProps(ctx: PropCtx): void {
+  // Giant frosted cupcakes and donuts on the horizon.
+  const frost = ['#ff8fcf', '#7fe0ff', '#ffe066', '#b58cff', '#6ff0b0']
+  horizon(ctx, 14, i => {
+    const g = new THREE.Group()
+    if (i % 2) {
+      const s = 30 + (i % 3) * 10
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(s, s * 0.78, s * 0.9, 12), std('#c8956a'))
+      cup.position.y = s * 0.45
+      const top = new THREE.Mesh(new THREE.SphereGeometry(s * 1.05, 14, 10, 0, Math.PI * 2, 0, Math.PI / 2), std(frost[i % frost.length], { roughness: 0.4 }))
+      top.position.y = s * 0.9
+      const cherry = new THREE.Mesh(new THREE.SphereGeometry(s * 0.2, 10, 8), std('#e30613', { roughness: 0.3 }))
+      cherry.position.y = s * 2
+      g.add(cup, top, cherry)
+    } else {
+      const s = 34 + (i % 3) * 8
+      const donut = new THREE.Mesh(new THREE.TorusGeometry(s, s * 0.45, 10, 20), std(frost[i % frost.length], { roughness: 0.4 }))
+      donut.position.y = s * 1.2
+      g.add(donut)
+    }
+    return g
+  })
+}
+
+function neonProps(ctx: PropCtx): void {
+  // Tower blocks with lit windows close to the road.
+  const tex = windowsTexture()
+  const towerMat = new THREE.MeshStandardMaterial({ color: '#1b1d2b', emissive: '#ffffff', emissiveMap: tex, emissiveIntensity: 1.1, roughness: 0.6, flatShading: true })
+  const towers = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), towerMat, 160)
+  const m4 = new THREE.Matrix4()
+  const q = new THREE.Quaternion()
+  towers.count = ctx.place(160, 8, 90, (x, z, y, i) => {
+    const w = 10 + ctx.rand() * 14
+    m4.compose(new THREE.Vector3(x, y - 0.5, z), q.setFromEuler(new THREE.Euler(0, ctx.rand() * 6.28, 0)), new THREE.Vector3(w, 18 + ctx.rand() * 60, w * (0.7 + ctx.rand() * 0.6)))
+    towers.setMatrixAt(i, m4)
+  })
+  ctx.scene.add(towers)
+  // Neon signs: glowing bars on posts.
+  const neon = ['#ff2bd6', '#2bf3ff', '#fef6a8', '#7b5cff', '#62ff9a']
+  const bars = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), 70)
+  bars.count = ctx.place(70, 2, 24, (x, z, y, i) => {
+    m4.compose(new THREE.Vector3(x, y + 5 + ctx.rand() * 5, z), q.setFromEuler(new THREE.Euler(0, ctx.rand() * 6.28, 0)), new THREE.Vector3(5 + ctx.rand() * 4, 0.6 + ctx.rand() * 1.4, 0.3))
+    bars.setMatrixAt(i, m4)
+    bars.setColorAt(i, new THREE.Color(neon[i % neon.length]))
+  })
+  ctx.scene.add(bars)
+  // Street lamps along the road.
+  const lamp = merged([
+    [new THREE.CylinderGeometry(0.08, 0.1, 1, 6), '#3a3d55', [0, 0.5, 0]],
+    [new THREE.BoxGeometry(0.5, 0.06, 0.2), '#3a3d55', [0.22, 0.98, 0]],
+  ])
+  scatter(ctx, lamp, vcol(), 90, 0.6, 3, () => [6, 6])
+  const bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.45, 8, 6), new THREE.MeshBasicMaterial({ color: '#fff3c4', toneMapped: false }), 60)
+  bulbs.count = ctx.place(60, 0.6, 3, (x, z, y, i) => {
+    m4.makeTranslation(x, y + 6, z)
+    bulbs.setMatrixAt(i, m4)
+  })
+  ctx.scene.add(bulbs)
+}
+
+function volcanoProps(ctx: PropCtx): void {
+  scatter(ctx, new THREE.DodecahedronGeometry(1, 0), std('#2b2326', { roughness: 0.95 }), 160, 2, 120, r => [1.2 + r() * 3.5, 1 + r() * 4], ['#2b2326', '#3d3438', '#4a3c3a'])
+  // Glowing lava rocks.
+  scatter(ctx, new THREE.IcosahedronGeometry(1, 0), new THREE.MeshStandardMaterial({ color: '#ff5a1f', emissive: '#ff3b00', emissiveIntensity: 1.2, flatShading: true }), 60, 3, 60, r => [0.6 + r() * 1.2, 0.5 + r() * 1])
+  // Basalt spires.
+  scatter(ctx, new THREE.CylinderGeometry(0.4, 0.9, 1, 6).translate(0, 0.5, 0), std('#1f1a1c', { roughness: 1 }), 70, 5, 90, r => [2 + r() * 2, 8 + r() * 16])
+  // Volcanoes on the horizon with glowing craters.
+  const coneMat = std('#2f272b', { roughness: 1 })
+  const glow = new THREE.MeshBasicMaterial({ color: '#ff5a1f', toneMapped: false })
+  horizon(ctx, 7, i => {
+    const g = new THREE.Group()
+    const h = 140 + (i % 3) * 50
+    const w = 110 + (i % 2) * 40
+    const cone = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.16, w, h, 9), coneMat)
+    cone.position.y = h / 2
+    const crater = new THREE.Mesh(new THREE.CylinderGeometry(w * 0.14, w * 0.14, 3, 9), glow)
+    crater.position.y = h + 1
+    g.add(cone, crater)
+    return g
+  })
+}
+
+function windowsTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')!
+  g.fillStyle = '#000000'
+  g.fillRect(0, 0, 64, 64)
+  const cols = ['#ffe9a8', '#7fdcff', '#ff9ae6']
+  for (let y = 2; y < 64; y += 8) for (let x = 2; x < 64; x += 8) {
+    if (Math.random() < 0.45) continue
+    g.fillStyle = cols[(x + y) % 3]
+    g.fillRect(x, y, 4, 5)
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.repeat.set(2, 6)
   t.colorSpace = THREE.SRGBColorSpace
   return t
 }

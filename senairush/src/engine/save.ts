@@ -5,7 +5,7 @@
 export type Locale = 'en' | 'zh-CN'
 export type Quality = 'low' | 'medium' | 'high'
 /** One finished race on the local leaderboard (sorted by total time). */
-export type RaceEntry = { name: string; character: string; time: number; place: number; bestLap: number; at: number }
+export type RaceEntry = { name: string; character: string; time: number; place: number; bestLap: number; at: number; track: string }
 
 export type SaveData = {
   version: 2
@@ -23,6 +23,8 @@ export type SaveData = {
   tutorialDone: boolean
   playerName: string
   character: string
+  /** Last circuit picked. */
+  track: string
   leaderboard: RaceEntry[]
 }
 
@@ -43,6 +45,7 @@ export function defaultSave(): SaveData {
     tutorialDone: false,
     playerName: 'PLAYER',
     character: 'hamster',
+    track: 'campus',
     leaderboard: [],
   }
 }
@@ -77,6 +80,7 @@ export function parseSave(raw: string | null): SaveData {
     tutorialDone: data.tutorialDone === true,
     playerName: typeof data.playerName === 'string' && data.playerName.trim() ? data.playerName.trim().slice(0, 16) : base.playerName,
     character: typeof data.character === 'string' && /^[a-z]{2,16}$/.test(data.character) ? data.character : base.character,
+    track: typeof data.track === 'string' && /^[a-z]{2,16}$/.test(data.track) ? data.track : base.track,
     leaderboard: board
       .filter((e): e is RaceEntry => !!e && typeof e === 'object' && typeof (e as RaceEntry).name === 'string' && Number.isFinite((e as RaceEntry).time) && (e as RaceEntry).time > 0)
       .map(e => ({
@@ -86,9 +90,11 @@ export function parseSave(raw: string | null): SaveData {
         place: Math.max(1, Math.min(6, Math.floor(num(e.place, 6)))),
         bestLap: num(e.bestLap, 0),
         at: num(e.at, 0),
+        // Entries from before there were several circuits belong to the campus.
+        track: typeof e.track === 'string' && /^[a-z]{2,16}$/.test(e.track) ? e.track : 'campus',
       }))
       .sort(compareEntries)
-      .slice(0, LEADERBOARD_SIZE),
+      .slice(0, LEADERBOARD_SIZE * 8),
   }
 }
 
@@ -99,8 +105,10 @@ export function compareEntries(a: RaceEntry, b: RaceEntry): number {
 
 /** Insert a race into the bounded leaderboard. `rank` is -1 when it did not make the cut. */
 export function insertEntry(board: RaceEntry[], entry: RaceEntry): { board: RaceEntry[]; rank: number } {
-  const next = [...board, entry].sort(compareEntries).slice(0, LEADERBOARD_SIZE)
-  return { board: next, rank: next.indexOf(entry) }
+  // Each circuit keeps its own top ten; `rank` is the place on that circuit's table.
+  const mine = [...board.filter(e => e.track === entry.track), entry].sort(compareEntries).slice(0, LEADERBOARD_SIZE)
+  const next = [...board.filter(e => e.track !== entry.track), ...mine].sort(compareEntries)
+  return { board: next, rank: mine.indexOf(entry) }
 }
 
 export class SaveStore {
