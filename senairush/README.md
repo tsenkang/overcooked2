@@ -50,12 +50,18 @@ pnpm smoke    # after build: headless browser playthrough + screenshots in shots
 
 ## Pistas
 
-Depois de **Race** vem a escolha de pista (o jogo monta o mundo da pista escolhida). São 6 circuitos,
+Depois de **Race** vem a escolha de pista (o jogo monta o mundo da pista escolhida). São 12 circuitos,
 cada um com tema, cenário, céu e obstáculos próprios — e todos com atalho, caixas de item e saltos:
 
 | Pista | Tema | Tamanho | O que acontece |
 | --- | --- | --- | --- |
 | **SENAI Campus** | Campus | 1,7 km | Prensas da oficina, salto da pedreira, turbinas, ônibus do campus, empilhadeiras cruzando, gêiseres de vapor |
+| **Rainbow Road** | Espaço | 2,0 km | Estrada arco-íris flutuando no espaço, trechos **sem grade** (dá pra cair!), meteoros, pinos-estrela que quicam, vento solar, dois saltos |
+| **Haunted Mansion** | Mansão assombrada | 1,9 km | Fantasmas atravessando, cripta com prensas, barras giratórias, colunas, ponte quebrada, ectoplasma escorregadio |
+| **Toy Factory** | Fábrica de brinquedos | 1,9 km | Esteiras que empurram para o lado, trenzinho de brinquedo, bolas quicando, linha de montagem com prensas, pinos de pinball, cola |
+| **Pirate Bay** | Baía pirata | 1,9 km | Balas de canhão cruzando a pista, barris rolando contra você, correnteza, ponte na baía, gêiseres de água |
+| **Cloud Garden** | Céu | 1,9 km | Estrada nas nuvens sem grade, rajadas de vento, colunas, saídas de ar e dois saltos |
+| **Jurassic Jungle** | Dinossauros | 2,0 km | Dinossauros atravessando, pedras rolando, lama, ponte sobre o rio, gêiseres de piche, salto |
 | **Cactus Rally** | Deserto | 1,8 km | Trem cruzando a reta, pedras rolando e despencando, salto sobre o cânion, gêiseres de petróleo, mancha de óleo |
 | **Frozen Peak** | Neve | 1,8 km | Bolas de neve gigantes rolando morro abaixo contra você, pinguins, fenda para pular, ponte no lago congelado, gelo |
 | **Sweet Valley** | Doce | 1,8 km | Bolas de chiclete atravessando, carrinhos, fábrica com prensas, xarope escorregadio, chafarizes de refrigerante, moinhos |

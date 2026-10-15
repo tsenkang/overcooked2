@@ -5,12 +5,14 @@
  */
 export type XZ = readonly [number, number]
 export type Lake = { x: number; z: number; r: number }
-export type ThemeId = 'campus' | 'desert' | 'snow' | 'candy' | 'neon' | 'volcano'
+export type ThemeId = 'campus' | 'desert' | 'snow' | 'candy' | 'neon' | 'volcano' | 'rainbow' | 'haunted' | 'toys' | 'pirate' | 'sky' | 'dino'
 
 /** Traffic and rolling things that travel along the road inside a stretch. */
-export type MoverKind = 'car' | 'bus' | 'snowball' | 'boulder' | 'cart'
+export type MoverKind = 'car' | 'bus' | 'snowball' | 'boulder' | 'cart' | 'ball' | 'barrel'
 /** Things that cross the road from side to side on a timer. */
-export type CrosserKind = 'train' | 'boulder' | 'penguin' | 'gumball' | 'forklift'
+export type CrosserKind = 'train' | 'boulder' | 'penguin' | 'gumball' | 'forklift' | 'ghost' | 'dino' | 'cannonball' | 'meteor' | 'toytrain'
+/** Sideways pushers: factory conveyors, gusts of wind, sea currents. */
+export type PushKind = 'conveyor' | 'wind' | 'current'
 
 export type TrackDef = {
   id: string
@@ -38,6 +40,12 @@ export type TrackDef = {
   geysers?: { at: XZ; ahead?: number; lateral: number; period?: number; phase?: number }[]
   /** Low-grip stretches (ice, oil, syrup). */
   slick?: { from: XZ; to: XZ }[]
+  /** Stretches with no guard rails: drive off the edge and you fall. */
+  open?: { from: XZ; to: XZ }[]
+  /** Stretches that shove karts sideways (`force` m/s², sign = direction; wind and currents swing). */
+  push?: { from: XZ; to: XZ; kind: PushKind; force: number; period?: number }[]
+  /** Solid posts on the road to weave around; bumpers also bounce you off. */
+  pillars?: { at: XZ; ahead?: number; lateral: number; radius?: number; bumper?: boolean }[]
   /** Big themed gate over the road. */
   landmark?: { at: XZ; ahead?: number }
 }
@@ -239,7 +247,187 @@ const VOLCANO: TrackDef = {
   landmark: { at: [-30, -120] },
 }
 
-export const TRACKS: TrackDef[] = [CAMPUS, DESERT, SNOW, CANDY, NEON, VOLCANO]
+
+/** Estrada Arco-Íris: a rainbow road floating in space — long stretches with no rails, meteors, star bumpers. */
+const RAINBOW: TrackDef = {
+  id: 'rainbow',
+  theme: 'rainbow',
+  points: [[0, 0, 12.0], [156, 0, 16.8], [286, -39, 24.0], [364, -143, 31.2], [351, -273, 36.0], [260, -351, 31.2], [143, -338, 24.0], [78, -260, 19.2], [0, -208, 16.8], [-91, -247, 21.6], [-182, -325, 28.8], [-299, -312, 26.4], [-364, -221, 21.6], [-338, -117, 16.8], [-247, -65, 12.0], [-156, -78, 9.6], [-104, -32, 10.8], [-52, 0, 12.0]],
+  shortcut: { from: [78, -260], via: [[20, -270, 18], [-40, -275, 19]], to: [-91, -247], slow: [0.3, 0.7] },
+  pads: [{ at: [-338, -117] }],
+  ramps: [
+    { at: [-136, -286], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [306, -312], length: 10, lip: 1.9, width: 16, pad: true, gap: 9 },
+  ],
+  rows: [{ at: [80, 0] }, { at: [330, -90] }, { at: [200, -345] }, { at: [40, -232] }, { at: [-240, -318] }, { at: [-300, -90] }, { at: [-120, -55] }],
+  open: [{ from: [156, 0], to: [351, -273] }, { from: [-91, -247], to: [-338, -117] }],
+  push: [{ from: [143, -338], to: [78, -260], kind: 'wind', force: 8, period: 2.6 }],
+  pillars: [
+    { at: [0, -208], ahead: -12, lateral: -3.5, bumper: true, radius: 1.6 },
+    { at: [0, -208], ahead: 4, lateral: 3.5, bumper: true, radius: 1.6 },
+    { at: [0, -208], ahead: 20, lateral: -1, bumper: true, radius: 1.6 },
+  ],
+  crossers: [
+    { at: [260, -351], kind: 'meteor', period: 5 },
+    { at: [-247, -65], kind: 'meteor', period: 6, phase: 0.3 },
+    { at: [-364, -221], kind: 'meteor', period: 4.5, phase: 0.6 },
+  ],
+  geysers: [
+    { at: [-156, -78], lateral: -3.5, period: 3.6 },
+    { at: [-156, -78], ahead: 12, lateral: 3.5, period: 3.6, phase: 0.5 },
+  ],
+  landmark: { at: [351, -273] },
+}
+
+/** Mansão Assombrada: ghosts drifting across, a crypt with presses, a broken bridge and ectoplasm. */
+const HAUNTED: TrackDef = {
+  id: 'haunted',
+  theme: 'haunted',
+  points: [[0, 0, 0.0], [112, -12, 1.3], [188, -62, 2.6], [200, -150, 5.2], [138, -212, 7.8], [50, -200, 7.8], [0, -262, 6.5], [38, -338, 5.2], [138, -362, 3.9], [238, -325, 3.9], [300, -250, 5.2], [325, -150, 6.5], [312, -50, 5.2], [262, 38, 3.9], [162, 75, 2.6], [62, 106, 1.3], [-89, 105, 0.0], [-121, 56, 0.0], [-108, 0, 0.0], [-56, -29, 0.0], [-12, -2, 0.0]],
+  shortcut: { from: [138, -212], via: [[90, -255, 7], [40, -285, 6]], to: [0, -262], slow: [0.3, 0.7] },
+  lakes: [{ x: 150, z: -120, r: 24 }],
+  pads: [{ at: [300, -250], ahead: -30 }],
+  ramps: [
+    { at: [88, -350], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [262, 38], ahead: -10, length: 9, lip: 1.5, width: 9 },
+  ],
+  rows: [{ at: [60, -5] }, { at: [200, -110] }, { at: [20, -300] }, { at: [260, -300] }, { at: [318, -90] }, { at: [200, 60] }, { at: [-110, 30] }],
+  halls: [{ from: [40, 104], to: [-50, 106], label: 'CRIPTA' }],
+  spinners: [
+    { at: [325, -150], ahead: -14, radius: 5, speed: 1.2 },
+    { at: [325, -150], ahead: 16, radius: 5, speed: -1.35, phase: 1 },
+  ],
+  pillars: [{ at: [200, -150], lateral: -4.2 }, { at: [200, -150], ahead: 22, lateral: 4.2 }],
+  crossers: [
+    { at: [112, -12], ahead: 30, kind: 'ghost', period: 5 },
+    { at: [138, -212], kind: 'ghost', period: 6, phase: 0.3 },
+    { at: [300, -250], kind: 'ghost', period: 5, phase: 0.6 },
+    { at: [162, 75], kind: 'ghost', period: 6, phase: 0.2 },
+  ],
+  geysers: [
+    { at: [287, -6], lateral: -3.5, period: 4 },
+    { at: [287, -6], ahead: 13, lateral: 3.5, period: 4, phase: 0.5 },
+  ],
+  slick: [{ from: [0, -262], to: [38, -338] }],
+  landmark: { at: [312, -50] },
+}
+
+/** Fábrica de Brinquedos: conveyor belts that shove you sideways, a toy train, bouncing balls, bumpers. */
+const TOYS: TrackDef = {
+  id: 'toys',
+  theme: 'toys',
+  points: [[0, 0, 0.0], [156, 0, 0.0], [228, -36, 0.0], [240, -120, 2.6], [192, -180, 5.2], [108, -180, 5.2], [60, -228, 5.2], [72, -312, 3.9], [156, -348, 2.6], [264, -336, 1.3], [336, -276, 0.0], [360, -180, 0.0], [360, -72, 2.6], [324, 24, 5.2], [240, 72, 5.2], [144, 90, 2.6], [48, 102, 1.3], [-85, 101, 0.0], [-116, 54, 0.0], [-103, 0, 0.0], [-54, -28, 0.0], [-12, -2, 0.0]],
+  shortcut: { from: [192, -180], via: [[150, -240, 5], [120, -280, 4]], to: [72, -312], slow: [0.3, 0.7] },
+  lakes: [{ x: 180, z: -60, r: 18 }],
+  pads: [{ at: [-103, 0] }],
+  ramps: [
+    { at: [300, -306], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [60, -228], ahead: -6, length: 9, lip: 1.5, width: 9 },
+  ],
+  rows: [{ at: [70, 0] }, { at: [236, -80] }, { at: [150, -180] }, { at: [200, -345] }, { at: [360, -130] }, { at: [280, 50] }, { at: [-100, 30] }],
+  halls: [{ from: [156, -348], to: [250, -338], label: 'LINHA DE MONTAGEM' }],
+  push: [
+    { from: [156, 0], to: [228, -36], kind: 'conveyor', force: 9 },
+    { from: [360, -180], to: [360, -72], kind: 'conveyor', force: 10 },
+  ],
+  pillars: [
+    { at: [324, 24], lateral: -3.5, bumper: true, radius: 1.6 },
+    { at: [324, 24], ahead: 12, lateral: 3.5, bumper: true, radius: 1.6 },
+    { at: [324, 24], ahead: 24, lateral: 0, bumper: true, radius: 1.6 },
+  ],
+  movers: [{ from: [240, -120], to: [108, -180], kind: 'ball', count: 3, speed: 9, lanes: [-4, 4] }],
+  crossers: [
+    { at: [348, -230], kind: 'toytrain', period: 9 },
+    { at: [48, 102], kind: 'toytrain', period: 10, phase: 0.5 },
+  ],
+  slick: [{ from: [-85, 101], to: [-116, 54] }],
+  landmark: { at: [360, -180], ahead: -40 },
+}
+
+/** Baía Pirata: cannons firing across the road, barrels rolling at you, a sea current and a bay bridge. */
+const PIRATE: TrackDef = {
+  id: 'pirate',
+  theme: 'pirate',
+  points: [[0, 0, 0.0], [105, 10, 0.0], [189, -21, 1.3], [242, -84, 2.6], [242, -168, 5.2], [189, -231, 7.8], [105, -242, 6.5], [42, -294, 3.9], [63, -368, 2.6], [147, -399, 1.3], [242, -378, 1.3], [315, -315, 2.6], [346, -220, 3.9], [346, -116, 2.6], [326, -21, 1.3], [262, 52, 0.0], [168, 84, 0.0], [74, 92, 0.0], [-75, 88, 0.0], [-102, 47, 0.0], [-90, 0, 0.0], [-47, -24, 0.0], [-10, -2, 0.0]],
+  shortcut: { from: [189, -231], via: [[120, -290, 4], [90, -322, 3]], to: [63, -368], slow: [0.3, 0.7] },
+  pads: [{ at: [326, -21] }],
+  ramps: [
+    { at: [280, -346], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [242, -84], ahead: -8, length: 9, lip: 1.5, width: 9 },
+  ],
+  rows: [{ at: [50, 5] }, { at: [242, -130] }, { at: [70, -330] }, { at: [195, -390] }, { at: [340, -170] }, { at: [220, 65] }, { at: [-95, 30] }],
+  bridges: [{ lake: { x: 262, z: 52, r: 16 }, span: 24 }],
+  push: [{ from: [42, -294], to: [63, -368], kind: 'current', force: 8, period: 2.5 }],
+  movers: [{ from: [242, -168], to: [105, -242], kind: 'barrel', count: 4, speed: -11, lanes: [-3.5, 3.5] }],
+  crossers: [
+    { at: [242, -120], kind: 'cannonball', period: 3.5 },
+    { at: [147, -399], kind: 'cannonball', period: 3.2, phase: 0.5 },
+    { at: [326, -21], ahead: 20, kind: 'cannonball', period: 4, phase: 0.25 },
+  ],
+  geysers: [
+    { at: [168, 84], lateral: -3.5, period: 3.8 },
+    { at: [168, 84], ahead: 13, lateral: 3.5, period: 3.8, phase: 0.5 },
+  ],
+  slick: [{ from: [346, -220], to: [346, -116] }],
+  landmark: { at: [315, -315] },
+}
+
+/** Jardim nas Nuvens: a sky road with no rails, gusts of wind, cloud columns and air-vent jumps. */
+const SKY: TrackDef = {
+  id: 'sky',
+  theme: 'sky',
+  points: [[0, 0, 30.0], [154, -14, 34.0], [280, -70, 40.0], [336, -182, 46.0], [294, -294, 50.0], [196, -350, 46.0], [84, -336, 40.0], [0, -392, 36.0], [-56, -490, 34.0], [-168, -518, 32.0], [-280, -462, 30.0], [-322, -350, 28.0], [-280, -238, 30.0], [-182, -182, 34.0], [-154, -84, 32.0], [-112, -28, 30.0], [-56, 0, 30.0]],
+  shortcut: { from: [0, -392], via: [[-80, -420, 35], [-140, -455, 33]], to: [-168, -518], slow: [0.3, 0.7] },
+  pads: [{ at: [336, -182] }],
+  ramps: [
+    { at: [40, -362], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [-232, -485], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+  ],
+  rows: [{ at: [80, -5] }, { at: [320, -130] }, { at: [140, -345] }, { at: [-20, -440] }, { at: [-300, -410] }, { at: [-230, -210] }, { at: [-90, -12] }],
+  open: [{ from: [154, -14], to: [294, -294] }, { from: [-168, -518], to: [-322, -350] }],
+  push: [
+    { from: [196, -350], to: [84, -336], kind: 'wind', force: 9, period: 2.4 },
+    { from: [-280, -238], to: [-182, -182], kind: 'wind', force: 9, period: 2.8 },
+  ],
+  pillars: [{ at: [-154, -84], lateral: -4 }, { at: [-154, -84], ahead: 20, lateral: 4 }],
+  geysers: [
+    { at: [-112, -28], lateral: -3, period: 3.5 },
+    { at: [-112, -28], ahead: 12, lateral: 3, period: 3.5, phase: 0.5 },
+  ],
+  landmark: { at: [294, -294] },
+}
+
+/** Selva Jurássica: dinosaurs stomping across the road, boulders, mud, tar pits and a river bridge. */
+const DINO: TrackDef = {
+  id: 'dino',
+  theme: 'dino',
+  points: [[0, 0, 0.0], [110, 0, 1.3], [200, -30, 3.9], [250, -100, 7.8], [240, -180, 11.7], [180, -230, 14.3], [100, -220, 13.0], [40, -260, 10.4], [20, -340, 7.8], [80, -400, 6.5], [170, -410, 5.2], [250, -370, 3.9], [310, -300, 3.9], [340, -210, 5.2], [350, -110, 6.5], [320, -20, 5.2], [260, 50, 2.6], [170, 80, 1.3], [75, 88, 0.0], [-71, 84, 0.0], [-97, 45, 0.0], [-86, 0, 0.0], [-45, -23, 0.0], [-10, -2, 0.0]],
+  shortcut: { from: [240, -180], via: [[170, -280, 10], [110, -290, 9]], to: [20, -340], slow: [0.3, 0.7] },
+  lakes: [{ x: 160, z: -120, r: 26 }],
+  pads: [{ at: [350, -110], ahead: -40 }],
+  ramps: [
+    { at: [50, -372], length: 10, lip: 1.9, width: 16, pad: true, gap: 10 },
+    { at: [250, -100], ahead: -8, length: 9, lip: 1.5, width: 9 },
+  ],
+  rows: [{ at: [55, 0] }, { at: [245, -140] }, { at: [140, -225] }, { at: [210, -395] }, { at: [345, -160] }, { at: [215, 70] }, { at: [-90, 30] }],
+  bridges: [{ lake: { x: 170, z: 80, r: 16 }, span: 24 }],
+  pillars: [{ at: [350, -110], lateral: -4.2, radius: 1.8 }, { at: [350, -110], ahead: 22, lateral: 4.2, radius: 1.8 }],
+  movers: [{ from: [100, -220], to: [20, -340], kind: 'boulder', count: 3, speed: 12, lanes: [-3.5, 3.5] }],
+  crossers: [
+    { at: [110, 0], ahead: 30, kind: 'dino', period: 9 },
+    { at: [240, -180], kind: 'dino', period: 10, phase: 0.4 },
+    { at: [170, -410], kind: 'dino', period: 9, phase: 0.7 },
+    { at: [320, -20], kind: 'dino', period: 10 },
+  ],
+  geysers: [
+    { at: [260, 50], ahead: -16, lateral: -3.5, period: 4 },
+    { at: [260, 50], ahead: -3, lateral: 3.5, period: 4, phase: 0.5 },
+  ],
+  slick: [{ from: [310, -300], to: [340, -210] }],
+  landmark: { at: [250, -370] },
+}
+
+export const TRACKS: TrackDef[] = [CAMPUS, RAINBOW, HAUNTED, TOYS, PIRATE, SKY, DINO, NEON, VOLCANO, CANDY, DESERT, SNOW]
 
 export function trackById(id: string): TrackDef {
   return TRACKS.find(t => t.id === id) ?? TRACKS[0]

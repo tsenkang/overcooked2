@@ -4,7 +4,7 @@ import type { Physics } from '../engine/physics'
 import { TrackSpline } from '../engine/spline'
 import { CONFIG } from './config'
 import type { Theme } from './themes'
-import type { CrosserKind, Lake, MoverKind, TrackDef, XZ } from './tracks'
+import type { CrosserKind, Lake, MoverKind, PushKind, TrackDef, XZ } from './tracks'
 
 /**
  * A circuit built from a `TrackDef` (see tracks.ts): road, shortcut, walls, colliders, boost pads,
@@ -28,10 +28,14 @@ export type Spinner = { s: number; radius: number; speed: number; phase: number 
 export type Mover = { kind: MoverKind; from: number; span: number; speed: number; lateral: number; phase: number; len: number; wid: number; height: number }
 /** Something crossing the road on a timer (trains, boulders, penguins). */
 export type Crosser = { kind: CrosserKind; s: number; period: number; phase: number; len: number; depth: number; speed: number; height: number }
+/** A stretch that shoves karts sideways. */
+export type Push = { from: number; to: number; kind: PushKind; force: number; period: number }
+/** A solid post on the road; bumpers also bounce karts away. */
+export type Pillar = { s: number; lateral: number; radius: number; bumper: boolean }
 /** A vent that erupts on a cycle. */
 export type Geyser = { s: number; lateral: number; period: number; phase: number; radius: number }
 /** What a hazard does to the kart it catches. */
-export type HazardHit = { kind: 'press' | 'turbine' | 'mover' | 'crosser' | 'geyser'; spin: number; lift: number; push: THREE.Vector3; squash: boolean }
+export type HazardHit = { kind: 'press' | 'turbine' | 'mover' | 'crosser' | 'geyser' | 'bumper'; spin: number; lift: number; push: THREE.Vector3; squash: boolean }
 type Obstacle = { position: THREE.Vector3; radius: number; hazard: boolean }
 
 const MOVER_SIZE: Record<MoverKind, { len: number; wid: number; height: number }> = {
@@ -40,6 +44,8 @@ const MOVER_SIZE: Record<MoverKind, { len: number; wid: number; height: number }
   snowball: { len: 3.6, wid: 3.6, height: 3.6 },
   boulder: { len: 3.4, wid: 3.4, height: 3.2 },
   cart: { len: 3.2, wid: 2.2, height: 1.6 },
+  ball: { len: 3, wid: 3, height: 3 },
+  barrel: { len: 2.6, wid: 2.6, height: 2.6 },
 }
 const CROSSER_SIZE: Record<CrosserKind, { len: number; depth: number; speed: number; height: number }> = {
   train: { len: 34, depth: 3.6, speed: 24, height: 4 },
@@ -47,6 +53,11 @@ const CROSSER_SIZE: Record<CrosserKind, { len: number; depth: number; speed: num
   penguin: { len: 5, depth: 2.2, speed: 4.5, height: 1.6 },
   gumball: { len: 3.2, depth: 3.2, speed: 12, height: 3.2 },
   forklift: { len: 4.6, depth: 2.4, speed: 6.5, height: 2.6 },
+  ghost: { len: 3, depth: 2.4, speed: 7, height: 3.2 },
+  dino: { len: 14, depth: 4, speed: 8, height: 7 },
+  cannonball: { len: 1.8, depth: 1.8, speed: 34, height: 1.8 },
+  meteor: { len: 3.4, depth: 3.4, speed: 26, height: 3.4 },
+  toytrain: { len: 22, depth: 3, speed: 16, height: 2.8 },
 }
 
 export type ItemSpot = { pos: THREE.Vector3; path: PathId; mainS: number }
@@ -89,6 +100,11 @@ export class Track {
   readonly halls: { from: number; to: number; label: string }[] = []
   /** Low-grip stretches. */
   readonly slick: { from: number; to: number }[] = []
+  /** No guard rails here. */
+  readonly open: { from: number; to: number }[] = []
+  readonly pushes: Push[] = []
+  readonly pillars: Pillar[] = []
+  private readonly pushViews: { mesh: THREE.Mesh; push: Push; sign: number }[] = []
   /** Lakes the scenery carves and fills (including the ones under bridges). */
   readonly lakes: Lake[]
   private readonly spinnerViews: THREE.Object3D[] = []
@@ -188,6 +204,15 @@ export class Track {
     }
     for (const c of def.crossers ?? []) this.crossers.push({ kind: c.kind, s: sAt(c.at, c.ahead), period: c.period, phase: c.phase ?? 0, ...CROSSER_SIZE[c.kind] })
     for (const g of def.geysers ?? []) this.geysers.push({ s: sAt(g.at, g.ahead), lateral: g.lateral, period: g.period ?? 4, phase: g.phase ?? 0, radius: 2.6 })
+    for (const o of def.open ?? []) {
+      const from = sAt(o.from)
+      this.open.push({ from, to: from + this.main.delta(from, sAt(o.to)) })
+    }
+    for (const pz of def.push ?? []) {
+      const from = sAt(pz.from)
+      this.pushes.push({ from, to: from + this.main.delta(from, sAt(pz.to)), kind: pz.kind, force: pz.force, period: pz.period ?? 3 })
+    }
+    for (const pl of def.pillars ?? []) this.pillars.push({ s: sAt(pl.at, pl.ahead), lateral: pl.lateral, radius: pl.radius ?? 1.4, bumper: !!pl.bumper })
     for (const sl of def.slick ?? []) {
       const from = sAt(sl.from)
       this.slick.push({ from, to: from + this.main.delta(from, sAt(sl.to)) })
@@ -215,6 +240,12 @@ export class Track {
     this.buildCrossers()
     this.buildGeysers()
     this.buildSlick()
+    this.buildPushes()
+    this.buildPillars()
+    if (theme.floating) {
+      this.buildDeck(this.main, WALL + 3)
+      this.buildDeck(this.short, SHORT_WALL + 2.5)
+    }
     this.buildStartLine()
     if (def.landmark) {
       const archS = sAt(def.landmark.at, def.landmark.ahead)
@@ -225,6 +256,27 @@ export class Track {
   /** On a bridge deck (no ground below). */
   inBridge(s: number): boolean {
     return this.bridges.some(b => this.main.delta(b.from, s) > 0 && this.main.delta(s, b.to) > 0)
+  }
+
+  inOpen(s: number): boolean {
+    return this.open.some(b => this.main.delta(b.from, s) > -2 && this.main.delta(s, b.to) > -2)
+  }
+
+  /** Sideways acceleration (m/s², + = towards `right`) a push zone applies here right now. */
+  pushAt(loc: Loc, time: number): number {
+    if (loc.path !== 'main') return 0
+    for (const p of this.pushes) {
+      const d = this.main.delta(p.from, loc.s)
+      if (d < 0 || this.main.delta(loc.s, p.to) < 0) continue
+      return p.force * this.pushSign(p, d, time)
+    }
+    return 0
+  }
+
+  /** Conveyors alternate every 12 m; wind and currents swing back and forth over time. */
+  private pushSign(p: Push, d: number, time: number): number {
+    if (p.kind === 'conveyor') return Math.floor(d / 12) % 2 === 0 ? 1 : -1
+    return Math.sin((time / p.period) * Math.PI * 2) >= 0 ? 1 : -1
   }
 
   inSlick(s: number): boolean {
@@ -336,6 +388,7 @@ export class Track {
       v.visible = fade > 0.01
       const roll = v.userData.roll as THREE.Object3D | undefined
       if (roll) roll.rotation.x = (time * m.speed) / (m.height / 2)
+      if (m.kind === 'ball' && roll) roll.position.y = m.height / 2 + Math.abs(Math.sin(time * 4 + i)) * 2.2
     })
     this.crossers.forEach((c, i) => {
       const v = this.crosserViews[i]
@@ -346,11 +399,18 @@ export class Track {
       v.body.rotation.y = this.main.yawAt(c.s) + Math.PI / 2 + (st.dir < 0 ? Math.PI : 0)
       const roll = v.body.userData.roll as THREE.Object3D | undefined
       if (roll) roll.rotation.x = time * c.speed * 0.6
+      const float = v.body.userData.float as THREE.Object3D | undefined
+      if (float) float.position.y = 1.2 + Math.sin(time * 3 + i) * 0.5
       const waddle = v.body.userData.waddle as THREE.Object3D | undefined
       if (waddle) waddle.rotation.z = Math.sin(time * 9) * 0.18
       const on = st.warning && Math.floor(time * 4) % 2 === 0
       for (const [k, l] of v.lights.entries()) (l.material as THREE.MeshBasicMaterial).color.set(st.warning && (on ? k % 2 === 0 : k % 2 === 1) ? '#ff2a2a' : '#401010')
     })
+    for (const v of this.pushViews) {
+      const tex = (v.mesh.material as THREE.MeshBasicMaterial).map!
+      const dir = v.push.kind === 'conveyor' ? v.sign : this.pushSign(v.push, 0, time)
+      tex.offset.x -= dir * (v.push.kind === 'wind' ? 0.05 : 0.02)
+    }
     this.geysers.forEach((g, i) => {
       const v = this.geyserViews[i]
       const st = this.geyserState(g, time)
@@ -510,6 +570,12 @@ export class Track {
       return { kind: 'turbine', spin: 0.9, lift: 5, push: pos.clone().sub(c).setY(0).normalize().multiplyScalar(8), squash: false }
     }
     if (loc.path !== 'main') return null
+    for (const pl of this.pillars) {
+      if (!pl.bumper || Math.abs(this.main.delta(pl.s, loc.s)) > pl.radius + 2) continue
+      const c = this.main.pointAt(pl.s, pl.lateral)
+      const away = pos.clone().sub(c).setY(0)
+      if (away.length() < pl.radius + 1.4) return { kind: 'bumper', spin: 0, lift: 2.5, push: away.normalize().multiplyScalar(13), squash: false }
+    }
     for (const m of this.movers) {
       const { s, fade } = this.moverAt(m, time)
       if (fade < 0.6) continue
@@ -538,6 +604,7 @@ export class Track {
   /** Every hazard the AI should steer around right now. */
   hazardObstacles(time: number): Obstacle[] {
     const out: Obstacle[] = [...this.pressObstacles(time), ...this.spinnerObstacles(time)]
+    for (const pl of this.pillars) out.push({ position: this.main.pointAt(pl.s, pl.lateral), radius: pl.radius + 1.2, hazard: true })
     for (const m of this.movers) {
       const { s, fade } = this.moverAt(m, time)
       if (fade < 0.3) continue
@@ -587,8 +654,14 @@ export class Track {
       } else {
         // Rolling ball (snowball / boulder).
         const roll = new THREE.Group()
-        const geo = m.kind === 'snowball' ? new THREE.IcosahedronGeometry(m.height / 2, 1) : new THREE.DodecahedronGeometry(m.height / 2, 0)
-        const ball = new THREE.Mesh(geo, mat(m.kind === 'snowball' ? '#ffffff' : '#8c6b52'))
+        const geo =
+          m.kind === 'snowball' || m.kind === 'ball'
+            ? new THREE.IcosahedronGeometry(m.height / 2, 2)
+            : m.kind === 'barrel'
+              ? new THREE.CylinderGeometry(m.height / 2, m.height / 2, m.wid * 0.9, 12).rotateZ(Math.PI / 2)
+              : new THREE.DodecahedronGeometry(m.height / 2, 0)
+        const color = m.kind === 'snowball' ? '#ffffff' : m.kind === 'ball' ? palette[i % palette.length] : m.kind === 'barrel' ? '#8a5a35' : '#8c6b52'
+        const ball = new THREE.Mesh(geo, mat(color))
         roll.add(ball)
         roll.position.y = m.height / 2
         g.add(roll)
@@ -627,6 +700,90 @@ export class Track {
         rails.position.copy(at.pos).setY(at.pos.y + 0.07)
         rails.rotation.y = Math.atan2(at.tan.x, at.tan.z) + Math.PI / 2
         this.group.add(rails)
+      } else if (c.kind === 'toytrain') {
+        const colors = ['#e30613', '#ffc400', '#2b9de9', '#00a99d']
+        const cars = 4
+        const each = c.len / cars
+        for (let k = 0; k < cars; k += 1) {
+          const car = new THREE.Mesh(new THREE.BoxGeometry(c.depth, c.height * 0.7, each - 0.5), mat(colors[k % colors.length]))
+          car.position.set(0, c.height * 0.45 + 0.4, c.len / 2 - each * (k + 0.5))
+          body.add(car)
+          for (const z of [-1, 1]) for (const x of [-1, 1]) {
+            const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.3, 10), mat('#1d232b'))
+            w.rotation.z = Math.PI / 2
+            w.position.set((x * c.depth) / 2, 0.45, car.position.z + (z * each) / 3.2)
+            body.add(w)
+          }
+        }
+        const chimney = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.55, 1.3, 10), mat('#1d232b'))
+        chimney.position.set(0, c.height + 0.6, c.len / 2 - each * 0.3)
+        body.add(chimney)
+        const rails = new THREE.Mesh(new THREE.BoxGeometry((WALL + 18) * 2, 0.12, 2.2), mat('#b07a45'))
+        const at = this.main.at(c.s)
+        rails.position.copy(at.pos).setY(at.pos.y + 0.07)
+        rails.rotation.y = Math.atan2(at.tan.x, at.tan.z) + Math.PI / 2
+        this.group.add(rails)
+      } else if (c.kind === 'ghost') {
+        const float = new THREE.Group()
+        const sheet = new THREE.Mesh(new THREE.CapsuleGeometry(1.1, 1.4, 6, 12), new THREE.MeshStandardMaterial({ color: '#f2f0ff', emissive: '#b8a6ff', emissiveIntensity: 0.6, transparent: true, opacity: 0.82, flatShading: true }))
+        for (const x of [-0.4, 0.4]) {
+          const eye = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), new THREE.MeshBasicMaterial({ color: '#1d1030' }))
+          eye.position.set(x, 0.6, 1.0)
+          float.add(eye)
+        }
+        float.add(sheet)
+        body.add(float)
+        body.userData.float = float
+      } else if (c.kind === 'dino') {
+        const green = mat('#4f9a52')
+        const torso = new THREE.Mesh(new THREE.BoxGeometry(c.depth, c.height * 0.45, c.len * 0.42), green)
+        torso.position.y = c.height * 0.5
+        const neck = new THREE.Mesh(new THREE.BoxGeometry(c.depth * 0.45, c.height * 0.55, 1.2), green)
+        neck.position.set(0, c.height * 0.8, c.len * 0.22)
+        neck.rotation.x = 0.35
+        const head = new THREE.Mesh(new THREE.BoxGeometry(c.depth * 0.6, 1.3, 2.4), green)
+        head.position.set(0, c.height * 1.05, c.len * 0.3)
+        const tail = new THREE.Mesh(new THREE.ConeGeometry(c.depth * 0.35, c.len * 0.5, 6), green)
+        tail.rotation.x = -Math.PI / 2
+        tail.position.set(0, c.height * 0.45, -c.len * 0.42)
+        body.add(torso, neck, head, tail)
+        for (const z of [-1, 1]) for (const x of [-1, 1]) {
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(1.1, c.height * 0.4, 1.1), mat('#3c8f3a'))
+          leg.position.set((x * c.depth) / 2.6, c.height * 0.2, (z * c.len) / 6)
+          body.add(leg)
+        }
+        for (let k = 0; k < 5; k += 1) {
+          const plate = new THREE.Mesh(new THREE.ConeGeometry(0.5, 1.2, 4), mat('#ff9f3a'))
+          plate.position.set(0, c.height * 0.78, c.len * 0.15 - k * 1.4)
+          body.add(plate)
+        }
+      } else if (c.kind === 'cannonball' || c.kind === 'meteor') {
+        const roll = new THREE.Group()
+        const ball =
+          c.kind === 'meteor'
+            ? new THREE.Mesh(new THREE.DodecahedronGeometry(c.height / 2, 0), new THREE.MeshStandardMaterial({ color: '#ff7b3d', emissive: '#ff3b00', emissiveIntensity: 1.3, flatShading: true }))
+            : new THREE.Mesh(new THREE.SphereGeometry(c.height / 2, 14, 10), mat('#1d232b'))
+        roll.add(ball)
+        roll.position.y = c.height / 2 + 0.3
+        body.add(roll)
+        body.userData.roll = roll
+        // Cannons on both banks (pirate bay), or nothing for meteors.
+        if (c.kind === 'cannonball') {
+          const at = this.main.at(c.s)
+          for (const side of [-1, 1]) {
+            const cannon = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 3.2, 12), mat('#2b2b33'))
+            cannon.rotation.z = Math.PI / 2
+            const g2 = new THREE.Group()
+            g2.add(cannon)
+            const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 0.3, 10), mat('#8a5a35'))
+            wheel.rotation.x = Math.PI / 2
+            wheel.position.y = -0.6
+            g2.add(wheel)
+            g2.position.copy(at.pos).addScaledVector(at.right, side * (WALL + 4)).setY(at.pos.y + 1.2)
+            g2.rotation.y = Math.atan2(at.tan.x, at.tan.z)
+            this.group.add(g2)
+          }
+        }
       } else if (c.kind === 'forklift') {
         const base = new THREE.Mesh(new THREE.BoxGeometry(c.depth, 1.3, c.len * 0.7), mat('#ffc400'))
         base.position.y = 1
@@ -685,7 +842,7 @@ export class Track {
   }
 
   private buildGeysers(): void {
-    const tone = { campus: '#e8f6ff', desert: '#3a2a20', snow: '#bfefff', candy: '#ff8ad0', neon: '#2bf3ff', volcano: '#ff5a1f' }[this.theme.id]
+    const tone = { campus: '#e8f6ff', desert: '#3a2a20', snow: '#bfefff', candy: '#ff8ad0', neon: '#2bf3ff', volcano: '#ff5a1f', rainbow: '#7fe0ff', haunted: '#7bff9a', toys: '#5ad1ff', pirate: '#bfeaff', sky: '#ffffff', dino: '#ff7b3d' }[this.theme.id]
     const colMat = new THREE.MeshBasicMaterial({ color: tone, transparent: true, opacity: 0.8, toneMapped: false })
     for (const g of this.geysers) {
       const at = this.main.pointAt(g.s, g.lateral)
@@ -703,6 +860,91 @@ export class Track {
       this.group.add(root)
       this.geyserViews.push({ column, cap, ring })
     }
+  }
+
+  private buildPushes(): void {
+    const tone = { conveyor: '#2b2b33', wind: '#ffffff', current: '#3cb4ff' } as const
+    for (const p of this.pushes) {
+      const seg = p.kind === 'conveyor' ? 12 : p.to - p.from
+      for (let a = p.from, k = 0; a < p.to - 0.5; a += seg, k += 1) {
+        const b = Math.min(p.to, a + seg)
+        const pos: number[] = []
+        const uv: number[] = []
+        const steps = Math.max(2, Math.ceil((b - a) / 2))
+        for (let i = 0; i <= steps; i += 1) {
+          const s = a + ((b - a) * i) / steps
+          const l = this.main.pointAt(s, -HALF_WIDTH + 0.9)
+          const r = this.main.pointAt(s, HALF_WIDTH - 0.9)
+          pos.push(l.x, l.y + 0.055, l.z, r.x, r.y + 0.055, r.z)
+          uv.push(0, (s - a) / 4, 4, (s - a) / 4)
+        }
+        const idx: number[] = []
+        for (let i = 0; i < steps; i += 1) idx.push(i * 2, i * 2 + 1, i * 2 + 2, i * 2 + 1, i * 2 + 3, i * 2 + 2)
+        const geo = new THREE.BufferGeometry()
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+        geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2))
+        geo.setIndex(idx)
+        const tex = sideArrowTexture(tone[p.kind], p.kind === 'conveyor' ? '#ffc400' : p.kind === 'wind' ? '#cfe6ff' : '#e8fbff')
+        const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: p.kind === 'conveyor' ? 0.95 : 0.5, side: THREE.DoubleSide, depthWrite: false, toneMapped: false }))
+        mesh.renderOrder = 1
+        this.group.add(mesh)
+        this.pushViews.push({ mesh, push: p, sign: k % 2 === 0 ? 1 : -1 })
+      }
+    }
+  }
+
+  private buildPillars(): void {
+    const walls = groups(COLLISION.WALL, COLLISION.KART | COLLISION.DEBRIS)
+    const look = {
+      rainbow: ['#ffe066', '#ff5fa2'], haunted: ['#3d3448', '#7bff9a'], toys: ['#2b9de9', '#ffc400'], pirate: ['#8a5a35', '#d9b36b'],
+      sky: ['#f2f0ea', '#7fd36b'], dino: ['#6b4f3a', '#3c8f3a'],
+    } as Record<string, [string, string]>
+    const [body, cap] = look[this.theme.id] ?? ['#8794a3', '#e30613']
+    for (const pl of this.pillars) {
+      const c = this.main.pointAt(pl.s, pl.lateral)
+      const g = new THREE.Group()
+      g.position.copy(c)
+      if (pl.bumper) {
+        const base = new THREE.Mesh(new THREE.CylinderGeometry(pl.radius, pl.radius * 1.1, 1.4, 16), new THREE.MeshStandardMaterial({ color: body, emissive: body, emissiveIntensity: 0.5, flatShading: true }))
+        base.position.y = 0.7
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(pl.radius, 0.22, 8, 20), new THREE.MeshBasicMaterial({ color: cap, toneMapped: false }))
+        ring.rotation.x = Math.PI / 2
+        ring.position.y = 1.45
+        g.add(base, ring)
+      } else {
+        const col = new THREE.Mesh(new THREE.CylinderGeometry(pl.radius, pl.radius * 1.15, 6, 10), new THREE.MeshStandardMaterial({ color: body, flatShading: true, roughness: 0.8 }))
+        col.position.y = 3
+        const top = new THREE.Mesh(new THREE.SphereGeometry(pl.radius * 1.15, 10, 8), new THREE.MeshStandardMaterial({ color: cap, flatShading: true }))
+        top.position.y = 6.2
+        g.add(col, top)
+      }
+      g.traverse(o => ((o as THREE.Mesh).castShadow = true))
+      this.group.add(g)
+      this.physics.addStaticCylinder(c.clone().setY(c.y + 2), pl.radius, 6, 0, walls)
+    }
+  }
+
+  /** Floating worlds: a thick deck under the road so it reads as a road in the sky. */
+  private buildDeck(sp: TrackSpline, half: number): void {
+    const pos: number[] = []
+    const n = sp.samples.length
+    const rows = sp.closed ? n : n - 1
+    const quad = (a: THREE.Vector3, b: THREE.Vector3, c: THREE.Vector3, d: THREE.Vector3) => pos.push(a.x, a.y, a.z, b.x, b.y, b.z, c.x, c.y, c.z, c.x, c.y, c.z, b.x, b.y, b.z, d.x, d.y, d.z)
+    for (let i = 0; i < rows; i += 2) {
+      const A = sp.samples[i]
+      const B = sp.samples[Math.min(sp.closed ? (i + 2) % n : i + 2, n - 1)]
+      if (sp === this.main && (this.inGap(A.s) || this.inGap(B.s))) continue
+      const at = (smp: typeof A, l: number, dy: number) => smp.pos.clone().addScaledVector(smp.right, l).setY(smp.pos.y + dy)
+      quad(at(A, -half, -1.6), at(B, -half, -1.6), at(A, half, -1.6), at(B, half, -1.6))
+      quad(at(A, -half, -0.05), at(B, -half, -0.05), at(A, -half, -1.6), at(B, -half, -1.6))
+      quad(at(A, half, -1.6), at(B, half, -1.6), at(A, half, -0.05), at(B, half, -0.05))
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    geo.computeVertexNormals()
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: this.theme.road.patch, emissive: this.theme.rainbow ? '#3a1d6b' : '#000000', flatShading: true, roughness: 0.8, side: THREE.DoubleSide }))
+    mesh.receiveShadow = true
+    this.group.add(mesh)
   }
 
   private buildSlick(): void {
@@ -755,7 +997,14 @@ export class Track {
   private buildRoad(): void {
     const sp = this.main
     const hw = HALF_WIDTH
-    const bands: { a: number; b: number; color: (i: number, j: number) => THREE.Color; y?: number }[] = [
+    const rainbow = (i: number, j: number) => new THREE.Color().setHSL((((j % 10) + Math.floor(j / 10) * 2) * 0.07 + i * 0.006) % 1, 0.85, 0.6)
+    const bands: { a: number; b: number; color: (i: number, j: number) => THREE.Color; y?: number }[] = this.theme.rainbow
+      ? [
+          { a: -hw - SHOULDER, b: -hw, color: () => this.c.shoulder },
+          { a: -hw, b: hw, color: rainbow },
+          { a: hw, b: hw + SHOULDER, color: () => this.c.shoulder },
+        ]
+      : [
       { a: -hw - SHOULDER, b: -hw, color: (i, j) => this.sprinkle(i, j) },
       { a: -hw, b: -hw + 0.9, color: i => (Math.floor(i / 2) % 2 ? this.c.kerbA : this.c.kerbB), y: 0.03 },
       { a: -hw + 0.9, b: -0.18, color: (i, j) => ((i * 7 + j) % 5 === 0 ? this.c.road2 : this.c.road) },
@@ -763,8 +1012,8 @@ export class Track {
       { a: 0.18, b: hw - 0.9, color: (i, j) => ((i * 5 + j) % 7 === 0 ? this.c.road2 : this.c.road) },
       { a: hw - 0.9, b: hw, color: i => (Math.floor(i / 2) % 2 ? this.c.kerbB : this.c.kerbA), y: 0.03 },
       { a: hw, b: hw + SHOULDER, color: (i, j) => this.sprinkle(i + 3, j) },
-    ]
-    const geo = ribbon(sp, bands, 2, 2, 0, (_p, s) => this.inGap(s))
+        ]
+    const geo = ribbon(sp, bands, 2, this.theme.rainbow ? 7 : 2, 0, (_p, s) => this.inGap(s))
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.85 }))
     mesh.receiveShadow = true
     this.group.add(mesh)
@@ -866,7 +1115,7 @@ export class Track {
         }
       }
     }
-    addWall(this.main, WALL, p => this.insideShortFootprint(p, 1.2))
+    addWall(this.main, WALL, p => this.insideShortFootprint(p, 1.2) || this.inOpen(this.main.closest(p).s))
     addWall(this.short, SHORT_WALL, p => this.insideMainFootprint(p, 1.6))
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
@@ -1291,4 +1540,29 @@ function chevronTexture(): THREE.CanvasTexture {
   tex.repeat.set(1, 2)
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
+}
+
+/** Arrows pointing sideways (u axis) for conveyors, wind and currents. */
+function sideArrowTexture(bg: string, fg: string): THREE.CanvasTexture {
+  const c = document.createElement('canvas')
+  c.width = 128
+  c.height = 64
+  const g = c.getContext('2d')!
+  g.fillStyle = bg
+  g.fillRect(0, 0, 128, 64)
+  g.fillStyle = fg
+  for (let k = 0; k < 2; k += 1) {
+    const x = k * 64
+    g.beginPath()
+    g.moveTo(x + 14, 12)
+    g.lineTo(x + 44, 32)
+    g.lineTo(x + 14, 52)
+    g.lineTo(x + 24, 32)
+    g.closePath()
+    g.fill()
+  }
+  const t = new THREE.CanvasTexture(c)
+  t.wrapS = t.wrapT = THREE.RepeatWrapping
+  t.colorSpace = THREE.SRGBColorSpace
+  return t
 }

@@ -1234,6 +1234,10 @@ function trackHazards(def: TrackDef): string[] {
   for (const k of new Set((def.movers ?? []).map(m => (m.kind === 'car' || m.kind === 'bus' ? 'traffic' : m.kind === 'cart' ? 'carts' : m.kind)))) out.push(k)
   for (const k of new Set((def.crossers ?? []).map(c => c.kind))) out.push(`x${k}`)
   if (def.geysers?.length) out.push('geyser')
+  if (def.open?.length) out.push('open')
+  for (const k of new Set((def.push ?? []).map(p => p.kind))) out.push(k)
+  if (def.pillars?.some(p => p.bumper)) out.push('bumper')
+  if (def.pillars?.some(p => !p.bumper)) out.push('pillar')
   if (def.slick?.length) out.push(`slick_${def.theme}`)
   return out
 }

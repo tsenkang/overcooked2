@@ -423,6 +423,12 @@ export class Game {
       }
       if (r.isPlayer && !r.finished) r.kart.speedScale = 1
       if (r.shrinkTime > 0) r.kart.speedScale *= CONFIG.items.boltSlow
+      // Conveyors, wind and currents shove grounded karts sideways.
+      const shove = r.kart.grounded ? this.track.pushAt(r.tracker.loc, this.time) : 0
+      if (shove !== 0) {
+        const right = this.track.main.at(r.tracker.loc.s).right
+        r.kart.nudge(right.clone().multiplyScalar(shove * dt))
+      }
       r.kart.step(dt, r.input, r.events)
     }
     if (!racing) this.input.consume('drift')
@@ -751,6 +757,16 @@ export class Game {
     if (r.respawnTime > 0 || r.invincible) return
     const hit = this.track.hazardAt(r.position, loc, r.kart.grounded, this.time)
     if (!hit) return
+    if (hit.kind === 'bumper') {
+      // Pinball bumper: a big bounce, no spin, and you can hit it again soon.
+      this.squashed.set(r, 0.4)
+      r.kart.impulse(hit.push.clone().setY(hit.lift))
+      r.bounce(1.5)
+      this.fx.ring(r.position, '#ffe066', 12, 8)
+      this.sfxAt('bump', r.position)
+      if (r.isPlayer) this.camFor(r).addTrauma(0.3)
+      return
+    }
     this.squashed.set(r, 1.6)
     if (r.shielded) {
       r.shieldTime = 0

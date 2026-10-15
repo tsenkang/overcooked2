@@ -27,6 +27,10 @@ export type Theme = {
   gate: { label: string; pillar: string; beam: string; badge: string }
   railA: string
   railB: string
+  /** No ground at all: the road floats (space, sky). */
+  floating?: boolean
+  /** Rainbow-striped road surface. */
+  rainbow?: boolean
 }
 
 export const THEMES: Record<ThemeId, Theme> = {
@@ -101,5 +105,80 @@ export const THEMES: Record<ThemeId, Theme> = {
     gate: { label: 'VULCÃO FERVENTE', pillar: '#2b2326', beam: '#ff3b1f', badge: '#ffb347' },
     railA: '#ff3b1f',
     railB: '#2b2326',
+  },
+  rainbow: {
+    id: 'rainbow',
+    road: { asphalt: '#2a1650', patch: '#2a1650', lane: '#ffffff', kerbA: '#ffffff', kerbB: '#7b5cff', shoulder: '#1a0f3a', sprinkles: ['#ffffff', '#ffe066', '#7fe0ff'], shortcut: '#3a2a7a', shortcutSlow: '#5a3aa0', slick: '#7fe0ff' },
+    sky: { top: [0.0, 0.0, 0.02], mid: [0.04, 0.02, 0.12], horizon: [0.2, 0.08, 0.36], fog: '#120a2a', fogNear: 320, fogFar: 1200, clouds: null },
+    light: { sun: '#ffffff', sunIntensity: 1.7, hemiSky: '#b0a4ff', hemiGround: '#1a1033', hemiIntensity: 1.0 },
+    terrain: { a: '#120a2a', b: '#120a2a', high: '#120a2a', low: '#120a2a', shore: '#120a2a', peak: '#120a2a', rim: 0 },
+    water: { color: '#7fe0ff', emissive: '#7fe0ff', glow: 1 },
+    banner: 'ESTRADA ARCO-ÍRIS',
+    gate: { label: 'ESTRADA ARCO-ÍRIS', pillar: '#7b5cff', beam: '#ff5fa2', badge: '#ffe066' },
+    railA: '#ff5fa2',
+    railB: '#7fe0ff',
+    floating: true,
+    rainbow: true,
+  },
+  haunted: {
+    id: 'haunted',
+    road: { asphalt: '#3a3540', patch: '#2b2731', lane: '#c8ffb0', kerbA: '#7b3fa0', kerbB: '#2b2731', shoulder: '#3d4a3a', sprinkles: ['#7bff9a', '#b18cff', '#ff9f3a'], shortcut: '#4a3d2e', shortcutSlow: '#3a2f24', slick: '#7bff9a' },
+    sky: { top: [0.03, 0.02, 0.07], mid: [0.15, 0.08, 0.22], horizon: [0.36, 0.26, 0.42], fog: '#2a2238', fogNear: 90, fogFar: 430, clouds: '#4a4058' },
+    light: { sun: '#c9b8ff', sunIntensity: 1.1, hemiSky: '#8f7fb8', hemiGround: '#1a1420', hemiIntensity: 0.8 },
+    terrain: { a: '#2f3b2c', b: '#3b4636', high: '#4a3d55', low: '#232a21', shore: '#2a2a2a', peak: '#5a5066', rim: 30 },
+    water: { color: '#3aff8a', emissive: '#1a8a4a', glow: 0.8 },
+    banner: 'MANSÃO ASSOMBRADA',
+    gate: { label: 'MANSÃO ASSOMBRADA', pillar: '#2b2731', beam: '#7b3fa0', badge: '#ff9f3a' },
+    railA: '#7b3fa0',
+    railB: '#2b2731',
+  },
+  toys: {
+    id: 'toys',
+    road: { asphalt: '#5aa9e6', patch: '#4a93cc', lane: '#ffffff', kerbA: '#e30613', kerbB: '#ffffff', shoulder: '#f2d29b', sprinkles: ['#e30613', '#ffc400', '#2b9de9', '#00a99d'], shortcut: '#c8956a', shortcutSlow: '#e8bb7d', slick: '#ffe066' },
+    sky: { top: [0.55, 0.75, 0.95], mid: [0.95, 0.88, 0.75], horizon: [1.0, 0.95, 0.85], fog: '#f6e7cf', fogNear: 220, fogFar: 820, clouds: null },
+    light: { sun: '#fff6e0', sunIntensity: 2.4, hemiSky: '#ffffff', hemiGround: '#b08a5a', hemiIntensity: 1.0 },
+    terrain: { a: '#4fa3d9', b: '#5bb3e6', high: '#7ccf6a', low: '#3f8fc4', shore: '#9fd8f5', peak: '#f2c94c', rim: 6 },
+    water: { color: '#5ad1ff', emissive: '#2b8ab0', glow: 0.3 },
+    banner: 'FÁBRICA DE BRINQUEDOS',
+    gate: { label: 'FÁBRICA DE BRINQUEDOS', pillar: '#2b9de9', beam: '#e30613', badge: '#ffc400' },
+    railA: '#ffc400',
+    railB: '#2b9de9',
+  },
+  pirate: {
+    id: 'pirate',
+    road: { asphalt: '#b88f5e', patch: '#a37c4e', lane: '#fff4d6', kerbA: '#e30613', kerbB: '#f7e3b5', shoulder: '#f0d3a2', sprinkles: ['#ffffff', '#ff9f8a', '#f7e3b5'], shortcut: '#8a6a4a', shortcutSlow: '#c8a46a', slick: '#3cc6c9' },
+    sky: { top: [0.1, 0.45, 0.85], mid: [0.5, 0.78, 0.95], horizon: [0.9, 0.97, 1.0], fog: '#bfe6f5', fogNear: 220, fogFar: 800, clouds: '#ffffff' },
+    light: { sun: '#fff1d0', sunIntensity: 3.0, hemiSky: '#ffffff', hemiGround: '#7a9a6a', hemiIntensity: 1.0 },
+    terrain: { a: '#e8cf95', b: '#f0dca8', high: '#6fbf5a', low: '#d9bd80', shore: '#f4e3b8', peak: '#5a9a48', rim: 10 },
+    water: { color: '#1fb5d6', emissive: '#0b6f8a', glow: 0.3 },
+    banner: 'BAÍA PIRATA',
+    gate: { label: 'BAÍA PIRATA', pillar: '#5a3b24', beam: '#1d232b', badge: '#ffc400' },
+    railA: '#e30613',
+    railB: '#f7e3b5',
+  },
+  sky: {
+    id: 'sky',
+    road: { asphalt: '#e9e4d8', patch: '#d8d2c4', lane: '#f2c94c', kerbA: '#f2c94c', kerbB: '#ffffff', shoulder: '#a8e07a', sprinkles: ['#ff8fcf', '#ffe066', '#ffffff'], shortcut: '#c8f0a0', shortcutSlow: '#a8e07a', slick: '#ffffff' },
+    sky: { top: [0.25, 0.55, 0.95], mid: [0.55, 0.8, 1.0], horizon: [1.0, 1.0, 1.0], fog: '#e6f3ff', fogNear: 260, fogFar: 1000, clouds: '#ffffff' },
+    light: { sun: '#fffaf0', sunIntensity: 2.8, hemiSky: '#ffffff', hemiGround: '#9fc6e8', hemiIntensity: 1.1 },
+    terrain: { a: '#e6f3ff', b: '#e6f3ff', high: '#e6f3ff', low: '#e6f3ff', shore: '#e6f3ff', peak: '#e6f3ff', rim: 0 },
+    water: { color: '#7fd3ff', emissive: '#3a8ac8', glow: 0.3 },
+    banner: 'JARDIM NAS NUVENS',
+    gate: { label: 'JARDIM NAS NUVENS', pillar: '#f2f0ea', beam: '#f2c94c', badge: '#7fd36b' },
+    railA: '#f2c94c',
+    railB: '#ffffff',
+    floating: true,
+  },
+  dino: {
+    id: 'dino',
+    road: { asphalt: '#6b5a48', patch: '#5a4a3a', lane: '#f7e3b5', kerbA: '#3c8f3a', kerbB: '#f7e3b5', shoulder: '#7a6a4a', sprinkles: ['#3c8f3a', '#9ccf5a', '#c8b88a'], shortcut: '#5a4630', shortcutSlow: '#4a3826', slick: '#6b4f2a' },
+    sky: { top: [0.2, 0.45, 0.7], mid: [0.6, 0.78, 0.7], horizon: [0.95, 0.92, 0.75], fog: '#b8d6b0', fogNear: 160, fogFar: 620, clouds: '#f0f4ea' },
+    light: { sun: '#fff1c8', sunIntensity: 2.6, hemiSky: '#e8ffd8', hemiGround: '#4a6a3a', hemiIntensity: 1.0 },
+    terrain: { a: '#3f7a3a', b: '#5a9a48', high: '#6b5a48', low: '#2f5a2c', shore: '#c8b88a', peak: '#8a7a5a', rim: 36 },
+    water: { color: '#3a8a7a', emissive: '#1a4a40', glow: 0.2 },
+    banner: 'SELVA JURÁSSICA',
+    gate: { label: 'SELVA JURÁSSICA', pillar: '#6b4f3a', beam: '#3c8f3a', badge: '#ff9f3a' },
+    railA: '#3c8f3a',
+    railB: '#f7e3b5',
   },
 }

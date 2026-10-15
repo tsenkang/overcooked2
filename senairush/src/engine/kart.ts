@@ -208,6 +208,12 @@ export class KartController {
   }
 
   /** Instant velocity change in world space (item hits, rams). */
+  /** Gentle continuous push (conveyors, wind, currents): changes velocity without a bump. */
+  nudge(v: THREE.Vector3): void {
+    const lv = this.body.linvel()
+    this.body.setLinvel({ x: lv.x + v.x, y: lv.y + v.y, z: lv.z + v.z }, true)
+  }
+
   impulse(v: THREE.Vector3): void {
     const lv = this.body.linvel()
     this.body.setLinvel({ x: lv.x + v.x, y: lv.y + v.y, z: lv.z + v.z }, true)

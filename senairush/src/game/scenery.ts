@@ -193,7 +193,8 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
     }
     return h
   }
-  for (let j = 0; j <= nz; j += 1) for (let i = 0; i <= nx; i += 1) heights[j * (nx + 1) + i] = heightAt(X0 + i * cell, Z0 + j * cell)
+  // Floating worlds (space, sky) have no ground at all.
+  if (!theme.floating) for (let j = 0; j <= nz; j += 1) for (let i = 0; i <= nx; i += 1) heights[j * (nx + 1) + i] = heightAt(X0 + i * cell, Z0 + j * cell)
   const tpos: number[] = []
   const tcol: number[] = []
   const grassA = new THREE.Color(theme.terrain.a)
@@ -218,7 +219,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
     tmpC.multiplyScalar(jitter)
     for (let k = 0; k < 3; k += 1) tcol.push(tmpC.r, tmpC.g, tmpC.b)
   }
-  for (let j = 0; j < nz; j += 1)
+  for (let j = 0; j < (theme.floating ? 0 : nz); j += 1)
     for (let i = 0; i < nx; i += 1) {
       const x0 = X0 + i * cell
       const z0 = Z0 + j * cell
@@ -240,7 +241,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   tgeo.computeVertexNormals()
   const terrain = new THREE.Mesh(tgeo, new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }))
   terrain.receiveShadow = true
-  scene.add(terrain)
+  if (!theme.floating) scene.add(terrain)
   const under = new THREE.Mesh(new THREE.PlaneGeometry(3000, 3000), new THREE.MeshBasicMaterial({ color: '#2f4354' }))
   under.rotation.x = -Math.PI / 2
   under.position.y = 8
@@ -249,7 +250,7 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   const ring = new THREE.Mesh(new THREE.RingGeometry(RFAR * 1.75 + 160, 2000, 48), new THREE.MeshBasicMaterial({ color: new THREE.Color(theme.terrain.low).multiplyScalar(0.7) }))
   ring.rotation.x = -Math.PI / 2
   ring.position.set(CX, theme.terrain.rim * 0.7, CZ)
-  scene.add(ring)
+  if (!theme.floating) scene.add(ring)
 
   // ── training courtyards ──────────────────────────────────────────────
   const waterMat = new THREE.MeshStandardMaterial({ color: theme.water.color, emissive: theme.water.emissive, emissiveIntensity: theme.water.glow, roughness: 0.12, metalness: 0.1, transparent: true, opacity: 0.88, flatShading: true })
@@ -410,6 +411,12 @@ export function buildScenery(scene: THREE.Scene, track: Track, shadowSize: numbe
   if (PROPS === 'candy') candyProps(ctx)
   if (PROPS === 'neon') neonProps(ctx)
   if (PROPS === 'volcano') volcanoProps(ctx)
+  if (PROPS === 'rainbow') spaceProps(ctx)
+  if (PROPS === 'sky') skyProps(ctx)
+  if (PROPS === 'haunted') hauntedProps(ctx)
+  if (PROPS === 'toys') toyProps(ctx)
+  if (PROPS === 'pirate') pirateProps(ctx)
+  if (PROPS === 'dino') dinoProps(ctx)
 
   // High coastal clouds.
   const clouds = new THREE.Group()
@@ -1058,4 +1065,303 @@ function windowsTexture(): THREE.CanvasTexture {
   t.repeat.set(2, 6)
   t.colorSpace = THREE.SRGBColorSpace
   return t
+}
+
+/** Floating worlds: props hang at road height instead of standing on terrain. */
+function roadY(ctx: PropCtx, x: number, z: number): number {
+  return ctx.field.query(x, z, 6).y
+}
+
+function spaceProps(ctx: PropCtx): void {
+  // Star field.
+  const n = 1800
+  const pos = new Float32Array(n * 3)
+  for (let i = 0; i < n; i += 1) {
+    const u = ctx.rand() * 2 - 1
+    const a = ctx.rand() * Math.PI * 2
+    const r = Math.sqrt(1 - u * u)
+    pos.set([Math.cos(a) * r * 850 + ctx.CX, u * 850, Math.sin(a) * r * 850 + ctx.CZ], i * 3)
+  }
+  const geo = new THREE.BufferGeometry()
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+  ctx.scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: '#ffffff', size: 2.2, sizeAttenuation: false, fog: false })))
+  // Planets with rings, and a moon.
+  const planets = [
+    { c: '#ff8a5c', r: 90, ring: '#ffd29a' },
+    { c: '#7b5cff', r: 60, ring: null },
+    { c: '#3cc6c9', r: 120, ring: '#b8f3ff' },
+    { c: '#ffe066', r: 40, ring: null },
+  ]
+  planets.forEach((p, i) => {
+    const a = (i / planets.length) * Math.PI * 2 + 0.6
+    const g = new THREE.Group()
+    const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(p.r, 2), new THREE.MeshStandardMaterial({ color: p.c, emissive: p.c, emissiveIntensity: 0.35, flatShading: true, fog: false }))
+    g.add(ball)
+    if (p.ring) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(p.r * 1.35, p.r * 1.9, 48), new THREE.MeshBasicMaterial({ color: p.ring, side: THREE.DoubleSide, transparent: true, opacity: 0.7, fog: false }))
+      ring.rotation.x = 1.2
+      g.add(ring)
+    }
+    g.position.set(ctx.CX + Math.cos(a) * (ctx.RFAR + 500), -60 + i * 70, ctx.CZ + Math.sin(a) * (ctx.RFAR + 500))
+    ctx.scene.add(g)
+  })
+  // Floating star bits beside the road.
+  const stars = new THREE.InstancedMesh(new THREE.OctahedronGeometry(1, 0), new THREE.MeshBasicMaterial({ color: '#ffffff', toneMapped: false }), 120)
+  const m4 = new THREE.Matrix4()
+  const cols = ['#ffe066', '#ff5fa2', '#7fe0ff', '#b58cff'].map(c => new THREE.Color(c))
+  stars.count = ctx.place(120, 6, 70, (x, z, _y, i) => {
+    const s = 0.8 + ctx.rand() * 2
+    m4.compose(new THREE.Vector3(x, roadY(ctx, x, z) - 10 + ctx.rand() * 30, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(ctx.rand(), ctx.rand(), 0)), new THREE.Vector3(s, s, s))
+    stars.setMatrixAt(i, m4)
+    stars.setColorAt(i, cols[i % cols.length])
+  })
+  ctx.scene.add(stars)
+}
+
+function skyProps(ctx: PropCtx): void {
+  // Sea of clouds far below.
+  const cloud = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#e6f3ff', emissiveIntensity: 0.4, flatShading: true, roughness: 1 })
+  const puffs = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), cloud, 260)
+  const m4 = new THREE.Matrix4()
+  for (let i = 0; i < 260; i += 1) {
+    const a = ctx.rand() * Math.PI * 2
+    const r = Math.sqrt(ctx.rand()) * (ctx.RFAR * 2.2)
+    const s = 18 + ctx.rand() * 30
+    m4.compose(new THREE.Vector3(ctx.CX + Math.cos(a) * r, -45 - ctx.rand() * 12, ctx.CZ + Math.sin(a) * r), new THREE.Quaternion(), new THREE.Vector3(s * 1.6, s * 0.5, s))
+    puffs.setMatrixAt(i, m4)
+  }
+  ctx.scene.add(puffs)
+  // Floating islands with a tree, and giant beanstalks.
+  const rock = std('#a08060', { roughness: 0.9 })
+  const grass = std('#7fd36b')
+  const leaf = std('#3c8f3a')
+  for (let i = 0; i < 26; i += 1) {
+    let x = 0
+    let z = 0
+    for (let t = 0; t < 30; t += 1) {
+      x = ctx.CX + (ctx.rand() - 0.5) * ctx.RFAR * 2.6
+      z = ctx.CZ + (ctx.rand() - 0.5) * ctx.RFAR * 2.6
+      if (ctx.field.query(x, z, 6).d > 25) break
+    }
+    const g = new THREE.Group()
+    const w = 6 + ctx.rand() * 12
+    const under = new THREE.Mesh(new THREE.ConeGeometry(w, w * 1.6, 7), rock)
+    under.rotation.x = Math.PI
+    under.position.y = -w * 0.8
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(w, w, 1.2, 7), grass)
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 5, 6), std('#6b4f3a'))
+    trunk.position.y = 3
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(3, 0), leaf)
+    crown.position.y = 6.5
+    g.add(under, top, trunk, crown)
+    g.position.set(x, roadY(ctx, x, z) - 20 + ctx.rand() * 50, z)
+    ctx.scene.add(g)
+  }
+  const stalk = std('#4caf50')
+  for (let i = 0; i < 8; i += 1) {
+    const x = ctx.CX + Math.cos(i * 0.8) * (ctx.RFAR + 60)
+    const z = ctx.CZ + Math.sin(i * 0.8) * (ctx.RFAR + 60)
+    for (let k = 0; k < 14; k += 1) {
+      const seg = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.8, 14, 8), stalk)
+      seg.position.set(x + Math.sin(k * 0.7) * 5, -60 + k * 13, z + Math.cos(k * 0.7) * 5)
+      seg.rotation.z = Math.sin(k) * 0.15
+      ctx.scene.add(seg)
+      if (k % 2) {
+        const l = new THREE.Mesh(new THREE.SphereGeometry(4, 6, 4), leaf)
+        l.scale.set(1.6, 0.3, 1)
+        l.position.copy(seg.position).add(new THREE.Vector3(4, 2, 0))
+        ctx.scene.add(l)
+      }
+    }
+  }
+}
+
+function hauntedProps(ctx: PropCtx): void {
+  const tree = merged([
+    [new THREE.CylinderGeometry(0.18, 0.3, 0.7, 6), '#2b2228', [0, 0.35, 0]],
+    [new THREE.CylinderGeometry(0.06, 0.12, 0.45, 5).rotateZ(0.9), '#2b2228', [0.2, 0.75, 0]],
+    [new THREE.CylinderGeometry(0.05, 0.1, 0.4, 5).rotateZ(-1.0), '#2b2228', [-0.18, 0.8, 0]],
+    [new THREE.CylinderGeometry(0.04, 0.08, 0.35, 5).rotateX(0.8), '#2b2228', [0, 0.85, 0.15]],
+  ])
+  scatter(ctx, tree, vcol(), 150, 3, 120, r => [5 + r() * 4, 8 + r() * 6])
+  const stone = merged([
+    [new THREE.BoxGeometry(0.7, 0.9, 0.18), '#8a8794', [0, 0.45, 0]],
+    [new THREE.CylinderGeometry(0.35, 0.35, 0.18, 10, 1, false, 0, Math.PI).rotateX(Math.PI / 2).rotateZ(Math.PI / 2), '#8a8794', [0, 0.9, 0]],
+  ])
+  scatter(ctx, stone, vcol(), 140, 2, 50, r => [1.6 + r() * 0.8, 1.6 + r() * 0.8])
+  const pumpkin = merged([
+    [new THREE.SphereGeometry(0.5, 10, 8).scale(1.2, 0.85, 1.2), '#ff8a1f', [0, 0.42, 0]],
+    [new THREE.CylinderGeometry(0.06, 0.08, 0.2, 6), '#3c6b2a', [0, 0.9, 0]],
+  ])
+  scatter(ctx, pumpkin, vcol({ emissive: '#ff6a00', emissiveIntensity: 0.35 }), 60, 1.5, 30, r => [1.5 + r() * 1.5, 1.5 + r() * 1.5])
+  // The mansion on the hill, and lit windows.
+  const wall = std('#3a3346')
+  const roof = std('#1d1726')
+  const glow = new THREE.MeshBasicMaterial({ color: '#ffd36b', toneMapped: false })
+  horizon(ctx, 5, i => {
+    const g = new THREE.Group()
+    const w = 60 + i * 8
+    const main = new THREE.Mesh(new THREE.BoxGeometry(w, 40, 30), wall)
+    main.position.y = 20
+    const r = new THREE.Mesh(new THREE.ConeGeometry(w * 0.75, 26, 4), roof)
+    r.position.y = 53
+    r.rotation.y = Math.PI / 4
+    g.add(main, r)
+    for (const side of [-1, 1]) {
+      const tower = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, 62, 8), wall)
+      tower.position.set((side * w) / 2, 31, 0)
+      const cap = new THREE.Mesh(new THREE.ConeGeometry(9, 22, 8), roof)
+      cap.position.set((side * w) / 2, 73, 0)
+      g.add(tower, cap)
+    }
+    for (let k = 0; k < 8; k += 1) {
+      const win = new THREE.Mesh(new THREE.PlaneGeometry(4, 6), glow)
+      win.position.set(-w / 2 + 8 + (k % 4) * ((w - 16) / 3), 14 + Math.floor(k / 4) * 14, 15.2)
+      g.add(win)
+    }
+    return g
+  })
+}
+
+function toyProps(ctx: PropCtx): void {
+  // Giant letter blocks.
+  const blockCols = ['#e30613', '#ffc400', '#2b9de9', '#00a99d', '#ff7aa2']
+  scatter(ctx, new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0), std('#ffffff', { roughness: 0.5 }), 110, 3, 90, r => { const s = 3 + r() * 5; return [s, s] }, blockCols)
+  // Pencils.
+  const pencil = merged([
+    [new THREE.CylinderGeometry(0.12, 0.12, 0.8, 6), '#ffc400', [0, 0.4, 0]],
+    [new THREE.ConeGeometry(0.12, 0.2, 6), '#f2d29b', [0, 0.9, 0]],
+    [new THREE.ConeGeometry(0.04, 0.06, 6), '#1d232b', [0, 1.02, 0]],
+    [new THREE.CylinderGeometry(0.12, 0.12, 0.08, 6), '#ff7aa2', [0, 0.02, 0]],
+  ])
+  scatter(ctx, pencil, vcol(), 60, 3, 60, r => [5 + r() * 2, 12 + r() * 8])
+  // Rubber ducks.
+  const duck = merged([
+    [new THREE.SphereGeometry(0.5, 10, 8).scale(1.3, 0.8, 1), '#ffd23f', [0, 0.4, 0]],
+    [new THREE.SphereGeometry(0.3, 10, 8), '#ffd23f', [0.35, 0.85, 0]],
+    [new THREE.ConeGeometry(0.1, 0.25, 6).rotateZ(-Math.PI / 2), '#ff8a1f', [0.7, 0.82, 0]],
+  ])
+  scatter(ctx, duck, vcol(), 40, 3, 50, r => [3 + r() * 3, 3 + r() * 3])
+  // Towers of stacked blocks on the horizon.
+  horizon(ctx, 12, i => {
+    const g = new THREE.Group()
+    let y = 0
+    for (let k = 0; k < 5 + (i % 3); k += 1) {
+      const s = 30 - k * 3
+      const b = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), std(blockCols[(i + k) % blockCols.length], { roughness: 0.5 }))
+      b.position.y = y + s / 2
+      b.rotation.y = k * 0.4
+      g.add(b)
+      y += s
+    }
+    return g
+  })
+}
+
+function pirateProps(ctx: PropCtx): void {
+  // The open sea around the bay.
+  const sea = new THREE.Mesh(new THREE.CircleGeometry(ctx.RFAR * 3 + 600, 48), new THREE.MeshStandardMaterial({ color: '#1fb5d6', emissive: '#0b6f8a', emissiveIntensity: 0.3, roughness: 0.15, flatShading: true }))
+  sea.rotation.x = -Math.PI / 2
+  sea.position.set(ctx.CX, -0.9, ctx.CZ)
+  ctx.scene.add(sea)
+  const palm = merged([
+    [new THREE.CylinderGeometry(0.08, 0.12, 1, 6).rotateZ(0.15), '#8a6a4a', [0.07, 0.5, 0]],
+    [new THREE.ConeGeometry(0.5, 0.12, 6).rotateZ(0.5), '#3c8f3a', [0.35, 1, 0]],
+    [new THREE.ConeGeometry(0.5, 0.12, 6).rotateZ(-0.5), '#4caf50', [-0.2, 1, 0]],
+    [new THREE.ConeGeometry(0.5, 0.12, 6).rotateX(0.5), '#3c8f3a', [0.07, 1, 0.3]],
+    [new THREE.ConeGeometry(0.5, 0.12, 6).rotateX(-0.5), '#4caf50', [0.07, 1, -0.3]],
+  ])
+  scatter(ctx, palm, vcol(), 160, 3, 100, r => [5 + r() * 3, 8 + r() * 6])
+  scatter(ctx, new THREE.CylinderGeometry(0.5, 0.5, 1.2, 10).translate(0, 0.6, 0), std('#8a5a35'), 60, 2, 30, r => [1.4 + r() * 0.4, 1.4 + r() * 0.4])
+  const chest = merged([
+    [new THREE.BoxGeometry(1, 0.6, 0.6), '#8a5a35', [0, 0.3, 0]],
+    [new THREE.CylinderGeometry(0.3, 0.3, 1, 8, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), '#a36b3f', [0, 0.6, 0]],
+    [new THREE.BoxGeometry(1.02, 0.08, 0.62), '#ffc400', [0, 0.45, 0]],
+  ])
+  scatter(ctx, chest, vcol(), 30, 2, 30, r => [2 + r(), 2 + r()])
+  // Pirate ships anchored offshore.
+  const hull = std('#5a3b24')
+  const sail = std('#f4ecd8', { side: THREE.DoubleSide })
+  horizon(ctx, 8, i => {
+    const g = new THREE.Group()
+    const L = 50 + (i % 3) * 10
+    const h = new THREE.Mesh(new THREE.BoxGeometry(14, 10, L), hull)
+    h.position.y = 4
+    g.add(h)
+    for (const k of [-0.25, 0.1, 0.4]) {
+      const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 40, 6), hull)
+      mast.position.set(0, 28, k * L)
+      const sl = new THREE.Mesh(new THREE.PlaneGeometry(18, 14), sail)
+      sl.position.set(0, 30, k * L + 0.8)
+      g.add(mast, sl)
+    }
+    const flag = new THREE.Mesh(new THREE.PlaneGeometry(6, 4), std('#1d232b', { side: THREE.DoubleSide }))
+    flag.position.set(3, 49, 0.1 * L)
+    g.add(flag)
+    return g
+  })
+}
+
+function dinoProps(ctx: PropCtx): void {
+  const tree = merged([
+    [new THREE.CylinderGeometry(0.1, 0.16, 0.7, 6), '#6b4f3a', [0, 0.35, 0]],
+    [new THREE.SphereGeometry(0.45, 8, 6).scale(1, 0.55, 1), '#2f6a2c', [0, 0.8, 0]],
+    [new THREE.SphereGeometry(0.32, 8, 6).scale(1, 0.55, 1), '#3f8a3a', [0.18, 0.95, 0.1]],
+  ])
+  scatter(ctx, tree, vcol(), 220, 3, 120, r => [8 + r() * 6, 12 + r() * 10])
+  const fern = merged([
+    [new THREE.ConeGeometry(0.5, 0.15, 5).rotateZ(0.6), '#5a9a48', [0.25, 0.3, 0]],
+    [new THREE.ConeGeometry(0.5, 0.15, 5).rotateZ(-0.6), '#4f8a3f', [-0.25, 0.3, 0]],
+    [new THREE.ConeGeometry(0.5, 0.15, 5).rotateX(0.6), '#5a9a48', [0, 0.3, 0.25]],
+  ])
+  scatter(ctx, fern, vcol(), 200, 1.5, 60, r => [2 + r() * 2, 2 + r() * 2])
+  // Giant rib cages.
+  const bone = std('#f2ead8', { roughness: 0.6 })
+  for (let i = 0; i < 6; i += 1) {
+    const g = new THREE.Group()
+    for (let k = 0; k < 6; k += 1) {
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(6, 0.5, 6, 16, Math.PI), bone)
+      rib.position.z = k * 3
+      g.add(rib)
+    }
+    const spine = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 18, 6), bone)
+    spine.rotation.x = Math.PI / 2
+    spine.position.set(0, 6, 7.5)
+    g.add(spine)
+    ctx.place(1, 12, 60, (x, z, y) => {
+      g.position.set(x, y - 0.5, z)
+      g.rotation.y = ctx.rand() * 6
+    })
+    ctx.scene.add(g)
+  }
+  // Long-necks on the horizon, and a smoking volcano.
+  const skin = std('#5a8a4a')
+  horizon(ctx, 9, i => {
+    const g = new THREE.Group()
+    if (i === 0) {
+      const cone = new THREE.Mesh(new THREE.CylinderGeometry(20, 120, 150, 9), std('#5a4636'))
+      cone.position.y = 75
+      const lava = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 3, 9), new THREE.MeshBasicMaterial({ color: '#ff5a1f', toneMapped: false }))
+      lava.position.y = 151
+      g.add(cone, lava)
+      return g
+    }
+    const body = new THREE.Mesh(new THREE.SphereGeometry(10, 10, 8).scale(1.6, 1, 1), skin)
+    body.position.y = 16
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(2, 3, 30, 8), skin)
+    neck.position.set(16, 34, 0)
+    neck.rotation.z = -0.5
+    const head = new THREE.Mesh(new THREE.SphereGeometry(3.2, 8, 6).scale(1.5, 1, 1), skin)
+    head.position.set(24, 48, 0)
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(3, 26, 8), skin)
+    tail.rotation.z = Math.PI / 2 + 0.3
+    tail.position.set(-26, 12, 0)
+    g.add(body, neck, head, tail)
+    for (const x of [-8, 8]) for (const z of [-5, 5]) {
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(2, 2.2, 12, 6), skin)
+      leg.position.set(x, 6, z)
+      g.add(leg)
+    }
+    return g
+  })
 }
