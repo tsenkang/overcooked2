@@ -120,12 +120,12 @@ export function specFor(stats: Stats): KartSpec {
   const d = (v: number) => (v - 3) / 2 // -1..1
   return {
     ...BASE_KART,
-    maxSpeed: BASE_KART.maxSpeed * (1 + d(stats.speed) * 0.035),
-    boostSpeed: BASE_KART.boostSpeed * (1 + d(stats.speed) * 0.025),
-    accel: BASE_KART.accel * (1 + d(stats.accel) * 0.14),
-    turnRate: BASE_KART.turnRate * (1 + d(stats.handling) * 0.07),
-    driftTight: BASE_KART.driftTight * (1 + d(stats.handling) * 0.05),
-    grip: BASE_KART.grip * (1 + d(stats.handling) * 0.12),
-    mass: 1 + d(stats.weight) * 0.35,
+    maxSpeed: BASE_KART.maxSpeed * (1 + d(stats.speed) * 0.05),
+    boostSpeed: BASE_KART.boostSpeed * (1 + d(stats.speed) * 0.035),
+    accel: BASE_KART.accel * (1 + d(stats.accel) * 0.2),
+    turnRate: BASE_KART.turnRate * (1 + d(stats.handling) * 0.1),
+    driftTight: BASE_KART.driftTight * (1 + d(stats.handling) * 0.07),
+    grip: BASE_KART.grip * (1 + d(stats.handling) * 0.16),
+    mass: 1 + d(stats.weight) * 0.45,
   }
 }
