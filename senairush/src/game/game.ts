@@ -390,8 +390,9 @@ export class Game {
     for (const r of this.racers) {
       if (r.respawnTime > 0) {
         r.respawnTime -= dt
-        const spot = this.track.respawn(r.tracker.loc)
-        r.kart.teleport(spot.pos.setY(spot.pos.y + (r.respawnTime > 0.3 ? 1.2 : 0)), spot.yaw)
+        const spot = r.respawnSpot ?? this.track.respawn(r.tracker.loc, CONFIG.race.respawnBack)
+        r.kart.teleport(spot.pos.clone().setY(spot.pos.y + (r.respawnTime > 0.3 ? 1.2 : 0)), spot.yaw)
+        if (r.respawnTime <= 0) r.respawnSpot = null
         r.input = { throttle: 0, brake: 0, steer: 0, drift: false }
         continue
       }
@@ -638,6 +639,8 @@ export class Game {
   private startRespawn(r: Racer): void {
     if (r.respawnTime > 0) return
     r.respawnTime = CONFIG.race.respawnSeconds
+    // Drop the racer a stretch back down the road, like Lakitu does.
+    r.respawnSpot = this.track.respawn(r.tracker.loc, CONFIG.race.respawnBack)
     r.kart.cancelDrift()
     this.fx.ring(r.position, '#ffffff', 16, 6)
     if (r.isPlayer) {

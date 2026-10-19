@@ -35,6 +35,8 @@ export class Racer {
   /** Power Outage: shrunk and slowed while > 0. */
   shrinkTime = 0
   respawnTime = 0
+  /** Where the current respawn drops this racer (picked once, a stretch back down the road). */
+  respawnSpot: { pos: THREE.Vector3; yaw: number } | null = null
   /** AI: time until it considers using its item. */
   aiItemDelay = 0
   aiUseShortcut = false

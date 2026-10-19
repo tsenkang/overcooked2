@@ -40,6 +40,8 @@ export const DEFAULT_CONFIG = {
     stallBefore: 1.6,
     killDepth: 14,
     respawnSeconds: 1.1,
+    /** Metres back down the road a fallen racer is put back. */
+    respawnBack: 30,
     /** Seconds after the player finishes before the results screen. */
     resultsDelay: 3.2,
   },
