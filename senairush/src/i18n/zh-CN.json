@@ -264,5 +264,14 @@
   "char.isaac.blurb": "不是最快的，但过弯像穿针一样精准。",
   "char.lebron.name": "Lebron",
   "char.lebron.species": "人类车手",
-  "char.lebron.blurb": "起步爆发，第一个弯道就来个扣篮。"
+  "char.lebron.blurb": "起步爆发，第一个弯道就来个扣篮。",
+  "level.title": "难度",
+  "level.easy": "简单",
+  "level.easy.cc": "50cc",
+  "level.normal": "普通",
+  "level.normal.cc": "100cc",
+  "level.hard": "困难",
+  "level.hard.cc": "150cc",
+  "level.insane": "疯狂",
+  "level.insane.cc": "200cc"
 }

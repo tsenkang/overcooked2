@@ -1,7 +1,7 @@
 import type { Audio } from '../engine/audio'
 import type { I18n } from '../engine/i18n'
 import { KEY_SETS, MAX_PLAYERS, sameDevice, type Device, type Input, type PlayerSlot } from '../engine/input'
-import { insertEntry, type Locale, type Quality, type SaveData, type SaveStore } from '../engine/save'
+import { LEVELS, insertEntry, type Level, type Locale, type Quality, type SaveData, type SaveStore } from '../engine/save'
 import { ROSTER, characterById } from '../game/characters'
 import { ITEM_KINDS, type ItemKind } from '../game/config'
 import type { Hint, HudState, RaceResult } from '../game/game'
@@ -125,6 +125,7 @@ export class Ui {
       h(`<section>
         <div class="tracks-wrap">
           <h2 class="panel-title tracks-title" data-i18n="tracks.title"></h2>
+          <div class="level-row"><span class="level-label" data-i18n="level.title"></span><div class="level-opts" data-level-opts></div></div>
           <div class="track-cards" data-track-cards></div>
           <div class="tracks-actions"><button class="btn" data-nav data-act="back"><span data-i18n="menu.back"></span></button></div>
         </div>
@@ -217,6 +218,7 @@ export class Ui {
     this.mapCanvas = this.q('hud', '[data-minimap]') as HTMLCanvasElement
     this.buildCards()
     this.buildTrackCards()
+    this.renderLevels()
     this.buildSettings()
     this.updatePlayersBtn()
     this.relabel()
@@ -266,6 +268,11 @@ export class Ui {
         break
       case 'pick':
         this.pick(el.dataset.id!)
+        break
+      case 'level':
+        this.audio.play('uiSelect')
+        this.actions.settings({ level: el.dataset.id as Level })
+        this.renderLevels()
         break
       case 'pick-track':
         this.audio.play('uiSelect')
@@ -349,6 +356,7 @@ export class Ui {
     if (screen === 'title') this.refreshTitle()
     if (screen === 'pause') this.refreshPadStatus()
     if (screen === 'lobby') this.renderLobby()
+    if (screen === 'tracks') this.renderLevels()
     if (screen === 'tracks') requestAnimationFrame(() => this.current().querySelector<HTMLElement>(`[data-id="${this.save.data.track}"]`)?.focus({ preventScroll: true }))
     if (screen === 'settings') this.refreshSettings()
     if (screen === 'select') this.pick(this.selected, true)
@@ -392,6 +400,7 @@ export class Ui {
     document.title = `${this.t('game.title')} · SENAI Pompéia`
     this.buildCards()
     this.buildTrackCards()
+    this.renderLevels()
     this.buildSettings()
     this.updatePlayersBtn()
     this.refreshTitle()
@@ -403,6 +412,17 @@ export class Ui {
   }
 
   // ─── track select ────────────────────────────────────────────────
+
+  /** Difficulty chips above the circuits (50cc-style). */
+  private renderLevels(): void {
+    const wrap = this.screens.get('tracks')?.querySelector<HTMLElement>('[data-level-opts]')
+    if (!wrap) return
+    const focused = document.activeElement instanceof HTMLElement && wrap.contains(document.activeElement)
+    wrap.innerHTML = LEVELS.map(l => `<button class="level-opt${l === this.save.data.level ? ' on' : ''}" data-nav data-act="level" data-id="${l}" data-level="${l}">
+        <span class="level-name">${esc(this.t(`level.${l}`))}</span><span class="level-cc">${esc(this.t(`level.${l}.cc`))}</span>
+      </button>`).join('')
+    if (focused) wrap.querySelector<HTMLElement>(`[data-id="${this.save.data.level}"]`)?.focus({ preventScroll: true })
+  }
 
   private buildTrackCards(): void {
     const wrap = this.screens.get('tracks')?.querySelector<HTMLElement>('[data-track-cards]')

@@ -71,6 +71,19 @@ cada um com tema, cenário, céu e obstáculos próprios — e todos com atalho,
 Toda pista é só dados em `src/game/tracks.ts` (pontos do traçado + obstáculos ancorados por posição);
 o tema (cores, céu, luz, decoração) fica em `src/game/themes.ts`. O recorde é separado por pista.
 
+## Níveis de dificuldade
+
+Na escolha de pista dá para escolher o nível dos adversários (fica salvo):
+
+| Nível | Como os bots correm |
+| --- | --- |
+| **Easy (50cc)** | Mais lentos, erram mais e demoram para usar itens |
+| **Normal (100cc)** | Pilotam bem, fazem drift e usam atalhos |
+| **Hard (150cc)** | Mais rápidos, quase sem erros, usam itens na hora |
+| **Insane (200cc)** | Todos no máximo e nunca aliviam quando estão na frente |
+
+Os valores ficam em `CONFIG.ai.levels` (`src/game/config.ts`).
+
 ## Poderes
 
 | Poder | O que faz |

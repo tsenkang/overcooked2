@@ -264,5 +264,14 @@
   "char.isaac.blurb": "Not the fastest, but threads every corner like a needle.",
   "char.lebron.name": "Lebron",
   "char.lebron.species": "Human racer",
-  "char.lebron.blurb": "Explodes off the line and dunks on the first corner."
+  "char.lebron.blurb": "Explodes off the line and dunks on the first corner.",
+  "level.title": "Difficulty",
+  "level.easy": "Easy",
+  "level.easy.cc": "50cc",
+  "level.normal": "Normal",
+  "level.normal.cc": "100cc",
+  "level.hard": "Hard",
+  "level.hard.cc": "150cc",
+  "level.insane": "Insane",
+  "level.insane.cc": "200cc"
 }

@@ -3,7 +3,7 @@ import { Sequencer, type Audio, type LoopVoice } from '../engine/audio'
 import type { Device, Input, PlayerSlot } from '../engine/input'
 import { Physics } from '../engine/physics'
 import type { Renderer } from '../engine/renderer'
-import type { Quality } from '../engine/save'
+import type { Level, Quality } from '../engine/save'
 import { SplineDriver, type Obstacle } from '../engine/splineAi'
 import { ChaseCamera } from './camera'
 import { ROSTER, characterById, type Character } from './characters'
@@ -77,13 +77,14 @@ export type GameHooks = {
   flash(): void
 }
 
-const SKILLS = [0.92, 0.84, 0.76, 0.68, 0.6]
 
 export class Game {
   mode: Mode = 'title'
   phase: Phase = 'intro'
   reducedMotion = false
   sensitivity = 1
+  /** AI difficulty for the next race. */
+  level: Level = 'normal'
   readonly scene = new THREE.Scene()
   readonly cam = new ChaseCamera()
   /** One chase camera per local player; `cam` doubles as Player 1's and the menu camera. */
@@ -220,8 +221,9 @@ export class Game {
       const playerIndex = slotAt.get(i) ?? 0
       const ch = playerIndex ? humans[playerIndex - 1] : (others[k++ % Math.max(1, others.length)] ?? ROSTER[i])
       const isPlayer = playerIndex > 0
-      const aiIndex = isPlayer ? 0 : Math.min(SKILLS.length - 1, ai++)
-      const r = new Racer(i, ch, isPlayer, this.physics, this.track, this.track.gridSlot(i), SKILLS[aiIndex])
+      const skills = CONFIG.ai.levels[this.level].skills
+      const aiIndex = isPlayer ? 0 : Math.min(skills.length - 1, ai++)
+      const r = new Racer(i, ch, isPlayer, this.physics, this.track, this.track.gridSlot(i), skills[aiIndex])
       r.playerIndex = playerIndex
       this.scene.add(r.view.root, r.view.shadow, ...r.trails.map(t => t.mesh))
       r.aiUseShortcut = Math.random() < CONFIG.ai.shortcutChance[Math.min(4, aiIndex)]
@@ -506,7 +508,7 @@ export class Game {
           this.audio.play('stall')
         }
       }
-      for (const r of this.racers) if (!r.isPlayer && Math.random() < 0.45 + (r.driver?.skill.skill ?? 0) * 0.3) r.kart.boost(0.9, 1.08)
+      for (const r of this.racers) if (!r.isPlayer && Math.random() < CONFIG.ai.levels[this.level].startBoost) r.kart.boost(0.9, 1.08)
       if (this.tutorial) this.hooks.hint('drive')
     }
   }
@@ -571,8 +573,9 @@ export class Game {
     r.input = driver.update(dt, path, pose, nearby)
     // Rubber band (mild) relative to the player; none in attract mode.
     const ref = this.player && !this.player.finished ? this.player : null
-    const base = r.isPlayer ? 0.96 : 0.955 + (r.driver?.skill.skill ?? 0.7) * 0.05
-    k.speedScale = ref && !r.isPlayer ? base * catchUp(ref.progress.u - r.progress.u) : base
+    const lvl = CONFIG.ai.levels[this.level]
+    const base = r.isPlayer ? 0.96 : (0.955 + (r.driver?.skill.skill ?? 0.7) * 0.05) * lvl.speed
+    k.speedScale = ref && !r.isPlayer ? base * catchUp(ref.progress.u - r.progress.u, { ...CONFIG.ai, ...lvl }) : base
     // Re-decide the shortcut once per lap.
     if (Math.abs(this.track.main.delta(0, loc.s)) < 1) r.aiUseShortcut = Math.random() < CONFIG.ai.shortcutChance[Math.floor((r.driver?.skill.skill ?? 0.7) * 4.9) % 5]
     // Ramp tricks.
@@ -627,7 +630,7 @@ export class Game {
       }
     }
     if (use) this.items.use(r, this.ordered)
-    else r.aiItemDelay = 0.3
+    else r.aiItemDelay = CONFIG.ai.levels[this.level].itemDelay
   }
 
   private startTrick(r: Racer): void {

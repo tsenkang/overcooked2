@@ -40,6 +40,7 @@ async function boot(): Promise<void> {
     ui.resetHud()
     // Split screen always opens with every player's controls.
     ui.showTutorial(tutorial || split, split ? devices.slice(0, racers.length) : undefined)
+    game.level = save.data.level
     game.startRace(racers, tutorial, devices)
     if (tutorial && !split) save.update({ tutorialDone: true })
     ui.show('hud')

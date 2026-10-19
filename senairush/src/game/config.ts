@@ -84,6 +84,16 @@ export const DEFAULT_CONFIG = {
     slowDownMax: 0.06,
     catchUpRange: 140,
     shortcutChance: [0.15, 0.35, 0.55, 0.7, 0.85],
+    /**
+     * Difficulty levels. `skills` go to the AI field from the front of the grid back; `speed` scales
+     * their top speed; the catch-up pair is the rubber band; `itemDelay` is how long they sit on items.
+     */
+    levels: {
+      easy: { skills: [0.78, 0.7, 0.62, 0.55, 0.5], speed: 0.95, catchUpMax: 0.03, slowDownMax: 0.08, itemDelay: 0.7, startBoost: 0.35 },
+      normal: { skills: [0.97, 0.92, 0.87, 0.82, 0.77], speed: 1.0, catchUpMax: 0.08, slowDownMax: 0.04, itemDelay: 0.3, startBoost: 0.65 },
+      hard: { skills: [1, 0.98, 0.95, 0.92, 0.89], speed: 1.03, catchUpMax: 0.1, slowDownMax: 0.02, itemDelay: 0.15, startBoost: 0.85 },
+      insane: { skills: [1, 1, 1, 1, 0.98], speed: 1.045, catchUpMax: 0.17, slowDownMax: 0, itemDelay: 0.05, startBoost: 1 },
+    },
   },
   camera: {
     fov: 64,

@@ -4,6 +4,9 @@
  */
 export type Locale = 'en' | 'zh-CN'
 export type Quality = 'low' | 'medium' | 'high'
+/** How hard the AI racers drive. */
+export type Level = 'easy' | 'normal' | 'hard' | 'insane'
+export const LEVELS: Level[] = ['easy', 'normal', 'hard', 'insane']
 /** One finished race on the local leaderboard (sorted by total time). */
 export type RaceEntry = { name: string; character: string; time: number; place: number; bestLap: number; at: number; track: string }
 
@@ -25,6 +28,7 @@ export type SaveData = {
   character: string
   /** Last circuit picked. */
   track: string
+  level: Level
   leaderboard: RaceEntry[]
 }
 
@@ -46,6 +50,7 @@ export function defaultSave(): SaveData {
     playerName: 'PLAYER',
     character: 'hamster',
     track: 'campus',
+    level: 'normal',
     leaderboard: [],
   }
 }
@@ -81,6 +86,7 @@ export function parseSave(raw: string | null): SaveData {
     playerName: typeof data.playerName === 'string' && data.playerName.trim() ? data.playerName.trim().slice(0, 16) : base.playerName,
     character: typeof data.character === 'string' && /^[a-z]{2,16}$/.test(data.character) ? data.character : base.character,
     track: typeof data.track === 'string' && /^[a-z]{2,16}$/.test(data.track) ? data.track : base.track,
+    level: LEVELS.includes(data.level as Level) ? (data.level as Level) : base.level,
     leaderboard: board
       .filter((e): e is RaceEntry => !!e && typeof e === 'object' && typeof (e as RaceEntry).name === 'string' && Number.isFinite((e as RaceEntry).time) && (e as RaceEntry).time > 0)
       .map(e => ({
